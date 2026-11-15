@@ -1,12 +1,14 @@
 /**
  * The twin, end to end: register, then the conversation.
  *
- * One screen rather than several because the whole claim of the product fits in one: it guesses,
- * it says how sure it is, it names a day you can hold it to, and it seals the guess so neither
- * side can move it afterwards. A card feed showed the same data and read as a dashboard.
+ * Three regions, following the prototype. The rail holds the voices this person argues with —
+ * the roles the twin read out of what they wrote — and lights the one that won the last
+ * judgment, which is the only place the ontology is visible at all and the only answer on
+ * screen to "why did it say that". The stage carries the orb, what the twin is doing, and the
+ * thread. The dock opens onto the record: settled counts, calibration, and what it held back.
  *
- * Every word the person reads about themselves comes from the backend -- the questions, the
- * retelling, the twin's own sentences -- because the twin's voice is part of the ledger and a
+ * Every word the person reads about themselves comes from the backend — the questions, the
+ * retelling, the twin's own sentences — because the twin's voice is part of the ledger, and a
  * copy of it rephrased in the client would be a second, unsealed version of what it said.
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -17,16 +19,16 @@ import {
   type Stage,
   type Thread,
   type TwinCreated,
+  type TwinRecord,
+  type Role,
 } from "../api/twin";
+import Orb, { type OrbMode } from "./Orb";
 import "./twin.css";
 
 /** Survives a refresh so a demo does not start over, and so does nothing else. */
 const SAVED_TWIN = "loka.twin.id";
 
-/**
- * The proxy attaches the real credential, so nothing secret reaches the browser. twin.ts needs
- * a non-empty token to proceed, and this stands in for one.
- */
+/** The proxy attaches the real credential, so nothing secret reaches the browser. */
 const client = twinClient({ getToken: async () => "via-proxy" });
 
 type Phase = "loading" | "register" | "retelling" | "thread" | "broken";
@@ -37,12 +39,20 @@ export default function TwinScreen() {
   const [created, setCreated] = useState<TwinCreated | null>(null);
   const [twinId, setTwinId] = useState<string | null>(null);
   const [thread, setThread] = useState<Thread | null>(null);
+  const [roles, setRoles] = useState<Role[]>([]);
+  const [record, setRecord] = useState<TwinRecord | null>(null);
+  const [dockOpen, setDockOpen] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [mode, setMode] = useState<OrbMode>("listen");
 
   const load = useCallback(async (id: string) => {
-    const next = await client.messages(id);
+    const [next, onto] = await Promise.all([
+      client.messages(id),
+      client.ontology(id).catch(() => null),
+    ]);
     setThread(next);
+    if (onto) setRoles(onto.roles);
     setPhase("thread");
   }, []);
 
@@ -71,14 +81,18 @@ export default function TwinScreen() {
       });
   }, [load]);
 
-  async function run(work: () => Promise<void>) {
+  async function run(work: () => Promise<void>, working: OrbMode = "think") {
     if (busy) return;
     setBusy(true);
+    setMode(working);
     setError("");
     try {
       await work();
+      setMode("speak");
+      setTimeout(() => setMode("listen"), 2400);
     } catch (e) {
       setError(String((e as Error)?.message || e));
+      setMode("listen");
     } finally {
       setBusy(false);
     }
@@ -90,6 +104,7 @@ export default function TwinScreen() {
       localStorage.setItem(SAVED_TWIN, made.twin_id);
       setTwinId(made.twin_id);
       setCreated(made);
+      setRoles(made.retelling.roles);
       setPhase("retelling");
     });
 
@@ -116,57 +131,187 @@ export default function TwinScreen() {
       await load(twinId);
     });
 
+  const toggleDock = () => {
+    const next = !dockOpen;
+    setDockOpen(next);
+    if (next && twinId) client.record(twinId).then(setRecord).catch(() => undefined);
+  };
+
   const startOver = () => {
     localStorage.removeItem(SAVED_TWIN);
     location.reload();
   };
 
-  if (phase === "loading") return <Shell><p className="muted">正在连接…</p></Shell>;
+  const bare = phase !== "thread";
+  const stage = thread?.stage ?? created?.stage ?? null;
 
-  if (phase === "broken")
-    return (
-      <Shell>
-        <h1>连不上分身服务</h1>
-        <p className="muted">{error}</p>
-        <button className="primary" onClick={() => location.reload()}>重试</button>
-      </Shell>
-    );
-
-  if (phase === "register" && form)
-    return <Shell><Register form={form} busy={busy} error={error} onDone={register} /></Shell>;
-
-  if (phase === "retelling" && created)
-    return <Shell><Retelling made={created} busy={busy} onEnter={enter} /></Shell>;
-
-  if (phase === "thread" && thread)
-    return (
-      <Conversation
-        thread={thread}
-        busy={busy}
-        error={error}
-        onSay={say}
-        onAnswer={answer}
-        onTick={enter}
-        onReset={startOver}
-      />
-    );
-
-  return <Shell><p className="muted">正在连接…</p></Shell>;
-}
-
-function Shell({ children }: { children: React.ReactNode }) {
-  return <main className="twin-shell">{children}</main>;
-}
-
-function StageBadge({ stage }: { stage: Stage }) {
   return (
-    <span className={`stage stage-${stage.level}`} title={stage.says}>
-      {stage.name}
-    </span>
+    <div className="twin-root">
+      <div className={`win${bare ? " bare" : ""}${dockOpen ? " dock-open" : ""}`}>
+        <header className="bar">
+          <div className="bar-left">
+            <div className="logo" title="Loka">
+              <i />
+            </div>
+            <span className="bar-name">
+              {phase === "thread" ? "我的分身" : "正在认识你"}
+            </span>
+          </div>
+          <div className="wbtns">
+            {phase === "thread" && (
+              <>
+                <button
+                  className={`wb${dockOpen ? " on" : ""}`}
+                  title="战绩台"
+                  aria-label="战绩台"
+                  onClick={toggleDock}
+                >
+                  <Icon name="record" />
+                </button>
+                <button className="wb" title="重来" aria-label="重来" onClick={startOver}>
+                  <Icon name="reset" />
+                </button>
+              </>
+            )}
+          </div>
+        </header>
+
+        {!bare && (
+          <Rail roles={roles} wonId={wonRole(thread, roles)} />
+        )}
+
+        <main className="stage">
+          <Orb className="orb" mode={mode} />
+
+          <div className="col">
+            {phase === "loading" && <Status title="正在连接" sub="" stage={null} />}
+
+            {phase === "broken" && (
+              <>
+                <Status title="连不上" sub={error} stage={null} />
+                <div className="actions">
+                  <button className="primary" onClick={() => location.reload()}>
+                    重试
+                  </button>
+                </div>
+              </>
+            )}
+
+            {phase === "register" && form && (
+              <Register form={form} busy={busy} error={error} onDone={register} />
+            )}
+
+            {phase === "retelling" && created && (
+              <Retelling made={created} busy={busy} onEnter={enter} />
+            )}
+
+            {phase === "thread" && thread && (
+              <Conversation
+                thread={thread}
+                stage={stage}
+                busy={busy}
+                mode={mode}
+                error={error}
+                onSay={say}
+                onAnswer={answer}
+                onTick={enter}
+              />
+            )}
+          </div>
+        </main>
+
+        <section className="dock" aria-label="战绩台">
+          <Dock record={record} onClose={toggleDock} />
+        </section>
+      </div>
+    </div>
+  );
+}
+
+/** Which voice won the last thing the twin said, by matching its conclusion against stances. */
+function wonRole(thread: Thread | null, roles: Role[]): string | null {
+  const spoken = [...(thread?.messages ?? [])]
+    .reverse()
+    .find((m) => m.kind === "said_by_twin");
+  if (!spoken || spoken.kind !== "said_by_twin") return null;
+  const said = spoken.text;
+  const hit = roles.find((r) => r.stance && said.includes(r.stance));
+  return hit?.id ?? null;
+}
+
+const PALETTE = ["#6fe3bd", "#9cc0ff", "#b9a6ff", "#f2c94c", "#f58aa0", "#7ad7f0"];
+const faceColour = (i: number) => PALETTE[i % PALETTE.length];
+
+function Icon({ name }: { name: "record" | "reset" | "send" | "mic" }) {
+  const paths: Record<string, React.ReactNode> = {
+    record: <path d="M3 13l3-4 3 3 4-7" />,
+    reset: <path d="M3 8a5 5 0 1 1 1.6 3.7M3 5v3h3" />,
+    send: <path d="M2.5 8L13.5 3 10 13.5 7.5 8.5z" />,
+    mic: (
+      <>
+        <rect x="6" y="2.5" width="4" height="7" rx="2" />
+        <path d="M3.8 7.6a4.2 4.2 0 0 0 8.4 0M8 11.8v1.7" />
+      </>
+    ),
+  };
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"
+         strokeLinecap="round" strokeLinejoin="round">
+      {paths[name]}
+    </svg>
+  );
+}
+
+// ──────────────────────────────── rail: the voices ────────────────────────────────
+
+function Rail({ roles, wonId }: { roles: Role[]; wonId: string | null }) {
+  return (
+    <aside className="rail" aria-label="你心里的声音">
+      <h4>声音</h4>
+      <span className="bp">{roles.length} 个</span>
+      <div className="voices">
+        {roles.map((r, i) => (
+          <button
+            key={r.id}
+            className={`voice${r.id === wonId ? " won" : ""}`}
+            title={`${r.label}${r.loud_when ? `\n什么时候最大声：${r.loud_when}` : ""}`}
+          >
+            <span className="face" style={{ background: faceColour(i) }}>
+              {r.label.slice(0, 1)}
+            </span>
+            <span className="nm">{r.label.slice(0, 5)}</span>
+          </button>
+        ))}
+      </div>
+    </aside>
+  );
+}
+
+function Status({
+  title,
+  sub,
+  stage,
+}: {
+  title: string;
+  sub: string;
+  stage: Stage | null;
+}) {
+  return (
+    <div className="status">
+      <h1>{title}</h1>
+      <p>{sub}</p>
+      {stage && (
+        <span className={`stage-badge${stage.can_assert ? " grown" : ""}`} title={stage.says}>
+          {stage.name}
+        </span>
+      )}
+    </div>
   );
 }
 
 // ───────────────────────────────── registration ─────────────────────────────────
+
+const STEPS = ["你是谁", "怎么做事", "手头的事", "什么时候别打扰"];
 
 function Register({
   form,
@@ -190,7 +335,8 @@ function Register({
   const [quiet, setQuiet] = useState("");
 
   const answeredAll = form.dilemmas.every((d) => picks[d.id]);
-  const steps = ["你是谁", "怎么做事", "手头的事", "什么时候别打扰"];
+  const titles = [form.copy.about, form.copy.dilemmas, form.copy.current_thing, form.copy.quiet];
+  const subs = [form.copy.about_hint, "", form.copy.current_thing_hint, form.copy.quiet_hint];
 
   function submit() {
     onDone({
@@ -208,185 +354,183 @@ function Register({
 
   return (
     <>
+      <Status title={titles[step]} sub={subs[step]} stage={null} />
       <ol className="steps" aria-label="注册进度">
-        {steps.map((label, i) => (
-          <li key={label} aria-current={i === step ? "step" : undefined} className={i < step ? "done" : ""}>
+        {STEPS.map((label, i) => (
+          <li key={label} aria-current={i === step ? "step" : undefined}
+              className={i < step ? "done" : ""}>
             {label}
           </li>
         ))}
       </ol>
 
-      {step === 0 && (
-        <section>
-          <h1>{form.copy.about}</h1>
-          <p className="muted">{form.copy.about_hint}</p>
-          <div className="chips">
-            {form.field_suggestions.map((s) => (
-              <button key={s} type="button" className="chip" onClick={() => setAbout(about ? `${about}，${s}` : s)}>
-                {s}
-              </button>
-            ))}
-          </div>
-          <textarea
-            rows={3}
-            value={about}
-            onChange={(e) => setAbout(e.target.value)}
-            placeholder="做审计的，自己也炒币，最近仓位跌得厉害"
-          />
-          <label>怎么称呼你</label>
-          <input value={name} onChange={(e) => setName(e.target.value)} maxLength={24} placeholder="阿哲" />
-          <div className="row">
-            <div>
-              <label>干了多久</label>
-              <select value={years} onChange={(e) => setYears(e.target.value)}>
-                {form.years_bands.map((b) => <option key={b}>{b}</option>)}
-              </select>
+      <div className="form">
+        {step === 0 && (
+          <>
+            <div className="chips">
+              {form.field_suggestions.map((s) => (
+                <button key={s} type="button" className="chip"
+                        onClick={() => setAbout(about ? `${about}，${s}` : s)}>
+                  {s}
+                </button>
+              ))}
             </div>
-            <div>
-              <label>年龄段</label>
-              <select value={age} onChange={(e) => setAge(e.target.value)}>
-                {form.age_bands.map((b) => <option key={b}>{b}</option>)}
-              </select>
+            <textarea className="field" rows={3} value={about}
+                      onChange={(e) => setAbout(e.target.value)}
+                      placeholder="做审计的，自己也炒币，最近仓位跌得厉害" />
+            <label>怎么称呼你</label>
+            <input value={name} onChange={(e) => setName(e.target.value)} maxLength={24}
+                   placeholder="阿哲" />
+            <div className="row">
+              <div>
+                <label>干了多久</label>
+                <select value={years} onChange={(e) => setYears(e.target.value)}>
+                  {form.years_bands.map((b) => <option key={b}>{b}</option>)}
+                </select>
+              </div>
+              <div>
+                <label>年龄段</label>
+                <select value={age} onChange={(e) => setAge(e.target.value)}>
+                  {form.age_bands.map((b) => <option key={b}>{b}</option>)}
+                </select>
+              </div>
             </div>
-          </div>
-          <label>还有什么它该知道的</label>
-          <textarea
-            rows={2}
-            value={background}
-            onChange={(e) => setBackground(e.target.value)}
-            placeholder="大所出来的，习惯先查账再下结论"
-          />
-          <button className="primary" disabled={!about.trim()} onClick={() => setStep(1)}>
-            下一步
-          </button>
-        </section>
-      )}
+            <label>还有什么它该知道的</label>
+            <textarea className="field" rows={2} value={background}
+                      onChange={(e) => setBackground(e.target.value)}
+                      placeholder="大所出来的，习惯先查账再下结论" />
+          </>
+        )}
 
-      {step === 1 && (
-        <section>
-          <h1>{form.copy.dilemmas}</h1>
-          {form.dilemmas.map((d: Dilemma) => (
+        {step === 1 &&
+          form.dilemmas.map((d: Dilemma) => (
             <article key={d.id} className="dilemma">
               <p>{d.text}</p>
               <div className="pair">
                 {d.options.map((o) => (
-                  <button
-                    key={o.id}
-                    type="button"
-                    className={picks[d.id] === o.id ? "pick on" : "pick"}
-                    onClick={() => setPicks({ ...picks, [d.id]: o.id })}
-                  >
+                  <button key={o.id} type="button"
+                          className={picks[d.id] === o.id ? "pick on" : "pick"}
+                          onClick={() => setPicks({ ...picks, [d.id]: o.id })}>
                     {o.label}
                   </button>
                 ))}
               </div>
             </article>
           ))}
-          <div className="row">
-            <button className="quiet" onClick={() => setStep(0)}>上一步</button>
-            <button className="primary" disabled={!answeredAll} onClick={() => setStep(2)}>下一步</button>
-          </div>
-        </section>
-      )}
 
-      {step === 2 && (
-        <section>
-          <h1>{form.copy.current_thing}</h1>
-          <p className="muted">{form.copy.current_thing_hint}</p>
-          <textarea
-            rows={3}
-            value={current}
-            onChange={(e) => setCurrent(e.target.value)}
-            placeholder="仓位又跌了 5 个点，在犹豫要不要补仓"
-          />
-          <div className="row">
-            <button className="quiet" onClick={() => setStep(1)}>上一步</button>
-            <button className="primary" onClick={() => setStep(3)}>下一步</button>
-          </div>
-        </section>
-      )}
+        {step === 2 && (
+          <textarea className="field" rows={3} value={current}
+                    onChange={(e) => setCurrent(e.target.value)}
+                    placeholder="仓位又跌了 5 个点，在犹豫要不要补仓" />
+        )}
 
-      {step === 3 && (
-        <section>
-          <h1>{form.copy.quiet}</h1>
-          <p className="muted">{form.copy.quiet_hint}</p>
-          <textarea
-            rows={2}
-            value={quiet}
-            onChange={(e) => setQuiet(e.target.value)}
-            placeholder={form.copy.quiet_placeholder}
-          />
-          <div className="row">
-            <button className="quiet" onClick={() => setStep(2)}>上一步</button>
-            <button className="primary" disabled={busy} onClick={submit}>
-              {busy ? "正在生成…" : "生成我的分身"}
-            </button>
-          </div>
-        </section>
-      )}
+        {step === 3 && (
+          <textarea className="field" rows={2} value={quiet}
+                    onChange={(e) => setQuiet(e.target.value)}
+                    placeholder={form.copy.quiet_placeholder} />
+        )}
+      </div>
 
-      {error && <p className="error" role="alert">{error}</p>}
+      {error && <p className="err" role="alert">{error}</p>}
+
+      <div className="actions">
+        {step > 0 && (
+          <button className="ghost" onClick={() => setStep(step - 1)}>上一步</button>
+        )}
+        {step < 3 ? (
+          <button className="primary"
+                  disabled={(step === 0 && !about.trim()) || (step === 1 && !answeredAll)}
+                  onClick={() => setStep(step + 1)}>
+            下一步
+          </button>
+        ) : (
+          <button className="primary" disabled={busy} onClick={submit}>
+            {busy ? "正在读你写的东西…" : "生成我的分身"}
+          </button>
+        )}
+      </div>
     </>
   );
 }
 
 // ───────────────────────────── what it heard back ─────────────────────────────
 
-function Retelling({ made, busy, onEnter }: { made: TwinCreated; busy: boolean; onEnter: () => void }) {
+function Retelling({
+  made,
+  busy,
+  onEnter,
+}: {
+  made: TwinCreated;
+  busy: boolean;
+  onEnter: () => void;
+}) {
   return (
-    <section className="retelling">
-      <small>分身已生成 <StageBadge stage={made.stage} /></small>
-      <h1>我听成这样。</h1>
-      <p className="heard">{made.retelling.heard}</p>
+    <>
+      <Status title="我听成这样" sub="读错了就直接跟它说" stage={made.stage} />
+      <div className="retelling">
+        <p className="heard">{made.retelling.heard}</p>
 
-      <h2>我听出你心里有这几个声音</h2>
-      <ul className="roles">
-        {made.retelling.roles.map((r) => (
-          <li key={r.id}>
-            <b>{r.label}</b>
-            <span>{r.loud_when}</span>
-          </li>
-        ))}
-      </ul>
+        <p className="sub">我听出你心里有这几个声音</p>
+        <ul className="roles">
+          {made.retelling.roles.map((r, i) => (
+            <li key={r.id}>
+              <span className="face" style={{ background: faceColour(i) }}>
+                {r.label.slice(0, 1)}
+              </span>
+              <span>
+                <b>{r.label}</b>
+                <span>{r.loud_when}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
 
-      <article className="quiet-card">
-        <h3>什么时候不打扰你</h3>
-        <p>{made.quiet_understood}</p>
-      </article>
-
-      <p className="promise">{made.retelling.promise}</p>
-
-      <article className="identity">
-        <h3>它的身份</h3>
-        <p className="address">{made.identity.npub}</p>
-        <p className="address">{made.identity.eth_address}</p>
-      </article>
-
-      <button className="primary" disabled={busy} onClick={onEnter}>
-        {busy ? "它正在想…" : "开始"}
-      </button>
-    </section>
+        <article className="note">
+          <h3>什么时候不打扰你</h3>
+          {made.quiet_understood}
+        </article>
+        <article className="note">
+          <h3>它的身份</h3>
+          <p className="addr">{made.identity.npub}</p>
+          <p className="addr">{made.identity.eth_address}</p>
+        </article>
+        <p className="sub">{made.retelling.promise}</p>
+      </div>
+      <div className="actions">
+        <button className="primary" disabled={busy} onClick={onEnter}>
+          {busy ? "它正在想…" : "开始"}
+        </button>
+      </div>
+    </>
   );
 }
 
 // ──────────────────────────────── the conversation ────────────────────────────────
 
+const SAYING: Record<OrbMode, [string, string]> = {
+  listen: ["我在听", "说点什么，它会先判断再开口"],
+  think: ["正在判断", "它在想该不该说、有多大把握"],
+  speak: ["正在说", "说出口的每一句都会被封存"],
+};
+
 function Conversation({
   thread,
+  stage,
   busy,
+  mode,
   error,
   onSay,
   onAnswer,
   onTick,
-  onReset,
 }: {
   thread: Thread;
+  stage: Stage | null;
   busy: boolean;
+  mode: OrbMode;
   error: string;
   onSay: (text: string) => void;
   onAnswer: (askId: string, option: string) => void;
   onTick: () => void;
-  onReset: () => void;
 }) {
   const [draft, setDraft] = useState("");
   const bottom = useRef<HTMLDivElement>(null);
@@ -394,19 +538,19 @@ function Conversation({
     bottom.current?.scrollIntoView({ behavior: "smooth" });
   }, [thread.messages.length]);
 
-  return (
-    <main className="twin-chat">
-      <header>
-        <div>
-          <b>我的分身</b>
-          <StageBadge stage={thread.stage} />
-        </div>
-        <button className="quiet small" onClick={onReset}>重来</button>
-      </header>
+  const send = () => {
+    const text = draft.trim();
+    if (!text || busy) return;
+    setDraft("");
+    onSay(text);
+  };
 
-      <p className="says">{thread.stage.says}</p>
+  return (
+    <>
+      <Status title={SAYING[mode][0]} sub={SAYING[mode][1]} stage={stage} />
+
       {/* It reached a view during the hours you told it not to interrupt, and kept it. Showing
-          the conclusion here is the point: the restriction delayed it, it did not delete it. */}
+          the conclusion is the point: the restriction delayed it, it did not delete it. */}
       {thread.while_you_were_away && (
         <article className="away">
           <p className="lead">{thread.while_you_were_away.lead}</p>
@@ -422,7 +566,7 @@ function Conversation({
           // No footer: there is no stake, no date and no seal, because nothing was sealed.
           // Dressing a remark up as a judgment is the thing the footer exists to prevent.
           if (m.kind === "replied_by_twin")
-            return <div key={i} className="bubble theirs plain">{m.text}</div>;
+            return <div key={i} className="bubble theirs">{m.text}</div>;
 
           if (m.kind === "asked_by_twin")
             return (
@@ -446,11 +590,6 @@ function Conversation({
           return (
             <div key={i} className="bubble theirs">
               <p>{m.text}</p>
-              {/* The sentence already says how sure it is and by when, in its own words, and
-                  rounds the stake to tenths while the ledger seals the exact figure -- so
-                  repeating either here put two numbers for one fact on the screen. What is
-                  left is what the sentence cannot carry: whether it has been marked yet, and
-                  the seal that stops anyone moving it afterwards. */}
               <footer>
                 {m.confidence_state === "provisional" && <span>把握还没校准</span>}
                 {m.settlement ? (
@@ -474,31 +613,81 @@ function Conversation({
         <p className="held">今天它忍住没说 {thread.held_today} 条</p>
       )}
 
-      {error && <p className="error" role="alert">{error}</p>}
+      {error && <p className="err" role="alert">{error}</p>}
 
       <form
         className="composer"
         onSubmit={(e) => {
           e.preventDefault();
-          const text = draft.trim();
-          if (!text || busy) return;
-          setDraft("");
-          onSay(text);
+          send();
         }}
       >
-        <input
+        <button type="button" className="ic" title="语音（还没接）" disabled>
+          <Icon name="mic" />
+        </button>
+        <textarea
+          rows={1}
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          placeholder="跟它说点什么"
           disabled={busy}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              send();
+            }
+          }}
+          placeholder="跟它说点什么…（Enter 发送）"
         />
-        <button className="primary" disabled={busy || !draft.trim()}>
-          {busy ? "…" : "发送"}
+        <span className="model">qwen3.5-9b</span>
+        <button type="button" className="ic" title="让它自己看一眼" disabled={busy}
+                onClick={onTick}>
+          <Icon name="record" />
+        </button>
+        <button className="ic" type="submit" disabled={busy || !draft.trim()} aria-label="发送">
+          <Icon name="send" />
         </button>
       </form>
-      <button className="quiet small full" disabled={busy} onClick={onTick}>
-        让它自己看一眼
-      </button>
-    </main>
+    </>
+  );
+}
+
+// ──────────────────────────────────── the dock ────────────────────────────────────
+
+function Dock({ record, onClose }: { record: TwinRecord | null; onClose: () => void }) {
+  return (
+    <div className="dockx">
+      <div className="dhead">
+        <b>战绩台</b>
+        <button className="wb" aria-label="收起" onClick={onClose}>
+          <Icon name="reset" />
+        </button>
+      </div>
+      <div className="dbody">
+        {!record ? (
+          <div className="empty">正在读账本…</div>
+        ) : !record.domains.length ? (
+          <div className="empty">还没有判断。{"\n"}跟它说点什么，它说出口的每一句都会记在这儿。</div>
+        ) : (
+          record.domains.map((d) => (
+            <article className="dom" key={d.domain}>
+              <b>{d.domain}</b>
+              <div className="g4">
+                <div>已判断<i>{d.judged}</i></div>
+                <div>已对账<i>{d.settled}</i></div>
+                <div>说对<i>{d.hit_rate === null ? "—" : `${Math.round(d.hit_rate * 100)}%`}</i></div>
+                {/* The one nobody else can show: it kept quiet and was right anyway. */}
+                <div>忍住说对<i className="gold">{d.held_back.right_anyway}</i></div>
+              </div>
+              <p className="bar-to">
+                离校准还差 {Math.max(0, d.threshold.min_settled - d.settled)} 条
+                <span className="track">
+                  <i style={{ width: `${Math.min(100, (d.settled / d.threshold.min_settled) * 100)}%` }} />
+                </span>
+              </p>
+            </article>
+          ))
+        )}
+      </div>
+    </div>
   );
 }

@@ -39,9 +39,26 @@ export type Stage = {
   says: string;
   next_step?: string;
 };
+/** One of the voices this person argues with, read out of what they wrote at registration. */
+export type Role = {
+  id: string;
+  label: string;
+  /** Its position, in the same terms as the situation -- which is what the twin says when
+   *  this one wins, so it is also how a reply can be traced back to a voice. */
+  stance: string;
+  loud_when: string;
+};
+export type Ontology = {
+  twin_id: string;
+  version: number;
+  state: string;
+  source: string;
+  roles: Role[];
+  permissions: { may_request: string[]; granted: string[]; never: string[] };
+};
 export type Retelling = {
   heard: string;
-  roles: { id: string; label: string; stance: string; loud_when: string }[];
+  roles: Role[];
   promise: string;
 };
 export type TwinCreated = {
@@ -224,6 +241,14 @@ export function twinClient({
         ontology_version: number;
         rewrote_ontology: boolean;
       }>(`/v1/twins/${encodeURIComponent(id)}/tell`, "POST", { text }, signal),
+    /** The voices, for the rail. The only place the ontology is visible on screen. */
+    ontology: (id: string, signal?: AbortSignal) =>
+      request<Ontology>(
+        `/v1/twins/${encodeURIComponent(id)}/ontology`,
+        "GET",
+        undefined,
+        signal,
+      ),
     /** The conversation screen. Everything the twin wants is an ask, and asks live here. */
     messages: (id: string, signal?: AbortSignal) =>
       request<Thread>(
