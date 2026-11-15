@@ -1990,3 +1990,14 @@
 .twin-root .plinks a { color: var(--speak); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .twin-root .plinks a:hover { text-decoration: underline; }
 .twin-root .pbtns { display: flex; gap: 10px; }
+/* The stage's orb fills its row and is drawn in the middle of it. Two older rules for the
+   chat layout (.win.talking .orb at 18%, and 64px on narrow screens) outranked the stage's
+   own and left the canvas a strip on the left: the sphere sat off-centre, and its glow was
+   cut off at the strip's right edge as a hard dark line. */
+.twin-root .win.talking .vstage .vorb .orb {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
