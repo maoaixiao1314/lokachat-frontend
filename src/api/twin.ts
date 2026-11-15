@@ -65,6 +65,63 @@ export type TickResult = {
   stage: Stage;
   material_ask?: MaterialAsk;
 };
+/** One entry in the thread. The thread is built from the ledger, never from a display copy. */
+export type ThreadMessage =
+  | { kind: "said_by_user"; at: string; text: string }
+  | {
+      kind: "said_by_twin";
+      at: string;
+      text: string;
+      judgment_id: string;
+      tone: string;
+      confidence: number;
+      confidence_state: string;
+      due_at: string | null;
+      seal_hash: string;
+      settlement: { outcome: string; correct: boolean; at: string } | null;
+    }
+  | {
+      kind: "asked_by_twin";
+      at: string;
+      ask_id: string;
+      text: string;
+      why: string;
+      options: string[];
+      answer: string | null;
+      answered_at: string | null;
+      actions: { id: string; label: string }[] | null;
+    };
+export type Thread = {
+  twin_id: string;
+  messages: ThreadMessage[];
+  while_you_were_away: string | null;
+  /** Judgments it made today and chose not to say. The silence is part of the record. */
+  held_today: number;
+  stage: Stage;
+};
+export type DomainRecord = {
+  domain: string;
+  judged: number;
+  settled: number;
+  correct: number;
+  hit_rate: number | null;
+  /** Of the ones it actually said out loud. Scoring only these is what rewards staying quiet. */
+  spoke: { settled: number; correct: number; hit_rate: number | null };
+  /** The counterweight: judgments it swallowed, and how many were right anyway. */
+  held_back: { count: number; right_anyway: number; note: string };
+  ece: number | null;
+  calibration_state: "provisional" | "calibrated";
+  curve: { raw: number; calibrated: number }[];
+  qualified_to_advise: boolean;
+  threshold: { min_settled: number; max_ece: number };
+};
+export type TwinRecord = {
+  twin_id: string;
+  stage: Stage;
+  domains: DomainRecord[];
+  /** Must be 0. Anything else means it let a commitment come due in silence. */
+  overdue_unsettled: number;
+};
 export class TwinRequestError extends Error {
   constructor(
     message: string,
@@ -148,5 +205,34 @@ export function twinClient({
         ontology_version: number;
         rewrote_ontology: boolean;
       }>(`/v1/twins/${encodeURIComponent(id)}/tell`, "POST", { text }, signal),
+    /** The conversation screen. Everything the twin wants is an ask, and asks live here. */
+    messages: (id: string, signal?: AbortSignal) =>
+      request<Thread>(
+        `/v1/twins/${encodeURIComponent(id)}/messages`,
+        "GET",
+        undefined,
+        signal,
+      ),
+    /** The single way to answer anything the twin asked, whatever kind of ask it was. */
+    answerAsk: (askId: string, answer: string, signal?: AbortSignal) =>
+      request<{ ask_id: string; accepted: boolean; effect: string | null }>(
+        `/v1/asks/${encodeURIComponent(askId)}/answer`,
+        "POST",
+        { answer },
+        signal,
+      ),
+    /** The track-record screen: settled counts, calibration, and what it held back. */
+    record: (id: string, signal?: AbortSignal) =>
+      request<TwinRecord>(
+        `/v1/twins/${encodeURIComponent(id)}/record`,
+        "GET",
+        undefined,
+        signal,
+      ),
+    /** An observer reporting a situation it saw. Not a message from the person. */
+    observe: (
+      input: { twin_id: string; state_text: string; features?: Record<string, unknown> },
+      signal?: AbortSignal,
+    ) => request<unknown>("/v1/contexts", "POST", input, signal),
   };
 }
