@@ -1114,3 +1114,107 @@
     transition: none !important;
   }
 }
+
+/* ───────────────────────────── the dock: 授权 ─────────────────────────────
+   Deliberately plain. A permission screen that looks persuasive is doing something
+   a permission screen should not do, so there is no accent colour on the off state
+   and nothing animates on the way to granting. */
+.twin-root .grants {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.twin-root .gnote {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.twin-root .scope {
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  padding: 11px 13px;
+}
+.twin-root .scope.on {
+  border-color: rgba(62, 207, 142, 0.34);
+  background: rgba(62, 207, 142, 0.05);
+}
+.twin-root .srow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.twin-root .scope b {
+  font-size: 12.5px;
+  font-weight: 500;
+}
+/* A labelled button, not an iconic toggle: a switch has no room to say which way is
+   on, and this is the one control on screen where guessing wrong opens your files. */
+.twin-root .sw {
+  font-size: 10.5px;
+  line-height: 24px;
+  padding: 0 11px;
+  border-radius: 99px;
+  border: 1px solid var(--line2);
+  color: var(--muted);
+  white-space: nowrap;
+  flex: none;
+}
+.twin-root .sw:hover:not(:disabled) {
+  color: var(--fg);
+  border-color: var(--glow);
+}
+.twin-root .sw.on {
+  color: var(--ok);
+  border-color: rgba(62, 207, 142, 0.45);
+}
+.twin-root .sw:disabled {
+  opacity: 0.45;
+}
+.twin-root .swhy {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  color: var(--fg);
+  opacity: 0.8;
+}
+.twin-root .sreal,
+.twin-root .snone {
+  margin: 7px 0 0;
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+.twin-root .sreal {
+  color: var(--ok);
+}
+.twin-root .sreal code {
+  font-family: var(--f-mono);
+  font-size: 10px;
+}
+.twin-root .snone {
+  color: var(--dim);
+}
+.twin-root .grants h5 {
+  margin: 10px 0 0;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+  letter-spacing: 0.08em;
+}
+.twin-root .never {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.twin-root .never li {
+  font-size: 12px;
+  color: var(--dim);
+  padding: 7px 13px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  text-decoration: line-through;
+  text-decoration-color: rgba(229, 72, 77, 0.5);
+}

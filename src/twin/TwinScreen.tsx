@@ -21,6 +21,7 @@ import {
   type TwinCreated,
   type TwinRecord,
   type Role,
+  type Grants as GrantsBody,
 } from "../api/twin";
 import Orb, { type OrbMode } from "./Orb";
 import "./twin.css";
@@ -33,6 +34,15 @@ const client = twinClient({ getToken: async () => "via-proxy" });
 
 type Phase = "loading" | "register" | "retelling" | "thread" | "broken";
 
+/** The workbench's pages. 授权 is a page and not a modal because it is a standing fact about
+ *  the twin -- what it may read right now -- not a step on the way to something else. */
+type Tab = "thread" | "record" | "grants";
+const DOCK_TITLE: Record<Tab, string> = {
+  thread: "全部说过的话",
+  record: "它说对了多少",
+  grants: "它能看到什么",
+};
+
 export default function TwinScreen() {
   const [phase, setPhase] = useState<Phase>("loading");
   const [form, setForm] = useState<RegistrationForm | null>(null);
@@ -41,8 +51,9 @@ export default function TwinScreen() {
   const [thread, setThread] = useState<Thread | null>(null);
   const [roles, setRoles] = useState<Role[]>([]);
   const [record, setRecord] = useState<TwinRecord | null>(null);
+  const [grants, setGrants] = useState<GrantsBody | null>(null);
   const [dockOpen, setDockOpen] = useState(false);
-  const [tab, setTab] = useState<"thread" | "record">("thread");
+  const [tab, setTab] = useState<Tab>("thread");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState<OrbMode>("listen");
@@ -132,12 +143,21 @@ export default function TwinScreen() {
       await load(twinId);
     });
 
-  const openDock = (which: "thread" | "record") => {
+  const openDock = (which: Tab) => {
     setTab(which);
     setDockOpen(true);
-    if (which === "record" && twinId)
-      client.record(twinId).then(setRecord).catch(() => undefined);
+    if (!twinId) return;
+    if (which === "record") client.record(twinId).then(setRecord).catch(() => undefined);
+    if (which === "grants") client.grants(twinId).then(setGrants).catch(() => undefined);
   };
+  // One scope per call, and the answer is the whole new state: whether a scope is open is the
+  // service's to say, never this screen's. A failed call therefore leaves the switch where it
+  // was instead of showing access that was not opened.
+  const setGrant = (scope: string, granted: boolean) =>
+    run(async () => {
+      if (!twinId) return;
+      setGrants(await client.setGrant(twinId, scope, granted));
+    });
   const toggleDock = () => {
     if (dockOpen) return setDockOpen(false);
     openDock(tab);
@@ -230,15 +250,13 @@ export default function TwinScreen() {
         <section className="dock" aria-label="工作台">
           <Dock
             tab={tab}
-            setTab={(t) => {
-              setTab(t);
-              if (t === "record" && twinId)
-                client.record(twinId).then(setRecord).catch(() => undefined);
-            }}
+            setTab={openDock}
             thread={thread}
             record={record}
+            grants={grants}
             busy={busy}
             onAnswer={answer}
+            onGrant={setGrant}
             onClose={() => setDockOpen(false)}
           />
         </section>
@@ -697,22 +715,26 @@ function Conversation({
 
 // ──────────────────────────────────── the dock ────────────────────────────────────
 
-/** The workbench: the whole thread, and the record it adds up to. */
+/** The workbench: the whole thread, the record it adds up to, and what it may read. */
 function Dock({
   tab,
   setTab,
   thread,
   record,
+  grants,
   busy,
   onAnswer,
+  onGrant,
   onClose,
 }: {
-  tab: "thread" | "record";
-  setTab: (t: "thread" | "record") => void;
+  tab: Tab;
+  setTab: (t: Tab) => void;
   thread: Thread | null;
   record: TwinRecord | null;
+  grants: GrantsBody | null;
   busy: boolean;
   onAnswer: (askId: string, option: string) => void;
+  onGrant: (scope: string, granted: boolean) => void;
   onClose: () => void;
 }) {
   const bottom = useRef<HTMLDivElement>(null);
@@ -729,9 +751,12 @@ function Dock({
         <button className={`tab${tab === "record" ? " on" : ""}`} onClick={() => setTab("record")}>
           战绩
         </button>
+        <button className={`tab${tab === "grants" ? " on" : ""}`} onClick={() => setTab("grants")}>
+          授权
+        </button>
       </div>
       <div className="dhead">
-        <b>{tab === "thread" ? "全部说过的话" : "它说对了多少"}</b>
+        <b>{DOCK_TITLE[tab]}</b>
         <button className="wb" aria-label="收起" onClick={onClose}>
           <Icon name="close" />
         </button>
@@ -791,6 +816,8 @@ function Dock({
               <div ref={bottom} />
             </div>
           )
+        ) : tab === "grants" ? (
+          <Grants grants={grants} busy={busy} onGrant={onGrant} />
         ) : !record ? (
           <div className="empty">正在读账本…</div>
         ) : !record.domains.length ? (
@@ -821,6 +848,74 @@ function Dock({
           ))
         )}
       </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────── the dock: 授权 ───────────────────────────────
+
+/**
+ * What it may read, and what it will never do.
+ *
+ * Three rules this screen exists to keep, all of them from the whitepaper rather than from
+ * taste. Registering opens nothing, so every switch starts off. One scope per tap, because a
+ * single "allow everything" is the shape consent goes wrong in. And `never` is shown as a
+ * statement with no control beside it -- the service refuses those scopes outright, so a
+ * switch there would be theatre.
+ *
+ * The fourth rule is ours: a scope nothing reads says so. Three of the four currently feed
+ * nothing, and a screen that collected that access anyway would be taking trust it has no use
+ * for. `observer` comes from the service, so this stays true as observers get written rather
+ * than drifting into a comment nobody updates.
+ */
+function Grants({
+  grants,
+  busy,
+  onGrant,
+}: {
+  grants: GrantsBody | null;
+  busy: boolean;
+  onGrant: (scope: string, granted: boolean) => void;
+}) {
+  if (!grants) return <div className="empty">正在读权限…</div>;
+  return (
+    <div className="grants">
+      <p className="gnote">注册没有打开任何东西。下面每一项都要你单独点开，也可以随时关掉。</p>
+      {grants.may_request.map((s) => (
+        <article className={`scope${s.granted ? " on" : ""}`} key={s.id}>
+          <div className="srow">
+            <b>{s.label}</b>
+            <button
+              className={`sw${s.granted ? " on" : ""}`}
+              disabled={busy}
+              aria-pressed={s.granted}
+              onClick={() => onGrant(s.id, !s.granted)}
+            >
+              {s.granted ? "已开，点一下关掉" : "打开"}
+            </button>
+          </div>
+          <p className="swhy">{s.why}</p>
+          {s.observer ? (
+            <p className="sreal">
+              打开之后由 <code>{s.observer}</code> 读，读到的东西会进它的判断。
+            </p>
+          ) : (
+            // Said plainly rather than hidden: the switch works and the grant is recorded,
+            // but nothing on our side reads this yet, and implying otherwise is the one thing
+            // a permission screen must not do.
+            <p className="snone">现在还没有东西在读这一项。打开只会记下你同意过，不会有数据流动。</p>
+          )}
+        </article>
+      ))}
+      <h5>它永远不会做的事</h5>
+      <ul className="never">
+        {grants.never.map((n) => (
+          <li key={n.id}>{n.label}</li>
+        ))}
+      </ul>
+      <p className="gnote">
+        这三条没有开关，是因为服务端直接拒绝——给它们留个开关，就等于说还可以商量。
+      </p>
     </div>
   );
 }

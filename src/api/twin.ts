@@ -158,6 +158,23 @@ export type TwinRecord = {
   /** Must be 0. Anything else means it let a commitment come due in silence. */
   overdue_unsettled: number;
 };
+/** One scope the twin may ask for, with the state of that ask. */
+export type Scope = {
+  id: string;
+  label: string;
+  why: string;
+  granted: boolean;
+  /** What actually reads this scope today, or null. Null means granting it changes nothing,
+   *  and the screen says so rather than letting a switch imply a reader that is not there. */
+  observer: string | null;
+};
+export type Grants = {
+  twin_id: string;
+  may_request: Scope[];
+  /** Stated, never offered. There is no switch for these and the service refuses them. */
+  never: { id: string; label: string }[];
+  grants: { scope: string; granted_at: string; revoked_at: string | null }[];
+};
 export class TwinRequestError extends Error {
   constructor(
     message: string,
@@ -271,6 +288,22 @@ export function twinClient({
         `/v1/twins/${encodeURIComponent(id)}/record`,
         "GET",
         undefined,
+        signal,
+      ),
+    /** What it may ask for, what it has, and what it will never do. */
+    grants: (id: string, signal?: AbortSignal) =>
+      request<Grants>(
+        `/v1/twins/${encodeURIComponent(id)}/grants`,
+        "GET",
+        undefined,
+        signal,
+      ),
+    /** One scope per call. There is deliberately no way to express "allow everything". */
+    setGrant: (id: string, scope: string, granted: boolean, signal?: AbortSignal) =>
+      request<Grants>(
+        `/v1/twins/${encodeURIComponent(id)}/grants`,
+        "POST",
+        { scope, granted },
         signal,
       ),
     /** An observer reporting a situation it saw. Not a message from the person. */
