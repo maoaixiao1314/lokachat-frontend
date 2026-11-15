@@ -1,4 +1,5 @@
 import ExperienceIdentity from "./ExperienceIdentity";
+import TwinScreen from "./twin/TwinScreen";
 import Workspace from "./board/Board";
 import React, { useEffect, useState, useCallback } from "react";
 import { createRoot } from "react-dom/client";
@@ -440,5 +441,7 @@ function Bootstrap() {
   );
 }
 createRoot(document.getElementById("root")!).render(
-  new URLSearchParams(location.search).has("identity") ? <ExperienceIdentity /> : location.pathname === "/design" ? <div className="h5-phone"><Workspace /></div> : <Bootstrap />,
+  // /twin is the twin backend end to end and needs no account: the twin service authenticates
+  // the gateway, not the person, so there is nothing for Privy to do here yet.
+  location.pathname === "/twin" ? <TwinScreen /> : new URLSearchParams(location.search).has("identity") ? <ExperienceIdentity /> : location.pathname === "/design" ? <div className="h5-phone"><Workspace /></div> : <Bootstrap />,
 );

@@ -1,0 +1,412 @@
+/* The twin screens. Phone-width first: the thing is a conversation, and a conversation that
+   only reads well on a desktop is the wrong shape for where this ends up. */
+
+.twin-shell,
+.twin-chat {
+  max-width: 540px;
+  margin: auto;
+  padding: 28px 20px 48px;
+}
+
+.twin-shell h1 {
+  font-size: 28px;
+  line-height: 1.25;
+  letter-spacing: -0.6px;
+  margin: 10px 0 14px;
+}
+.twin-shell h2 {
+  font-size: 16px;
+  margin: 26px 0 10px;
+  color: #4a4457;
+}
+.twin-shell h3 {
+  font-size: 14px;
+  margin: 0 0 6px;
+  color: #706982;
+  font-weight: 600;
+}
+.muted {
+  color: #837c93;
+  font-size: 14px;
+  margin: 0 0 14px;
+}
+
+/* ── controls ─────────────────────────────────────────────────────────────── */
+
+label {
+  display: block;
+  font-size: 13px;
+  color: #706982;
+  margin: 16px 0 6px;
+}
+input,
+textarea,
+select {
+  width: 100%;
+  font: inherit;
+  padding: 11px 13px;
+  border: 1px solid #ddd9e6;
+  border-radius: 11px;
+  background: #fff;
+  color: inherit;
+}
+textarea {
+  resize: vertical;
+}
+input:focus,
+textarea:focus,
+select:focus {
+  outline: 2px solid #9d8fb5;
+  outline-offset: 1px;
+  border-color: transparent;
+}
+button {
+  font: inherit;
+  cursor: pointer;
+  border-radius: 11px;
+  border: 1px solid transparent;
+  padding: 11px 18px;
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.primary {
+  background: #4b3f63;
+  color: #fff;
+  width: 100%;
+  margin-top: 20px;
+}
+.quiet {
+  background: #fff;
+  border-color: #ddd9e6;
+  color: #4a4457;
+}
+.quiet.small {
+  padding: 7px 12px;
+  font-size: 13px;
+  border-radius: 9px;
+}
+.quiet.full {
+  width: 100%;
+  margin-top: 10px;
+}
+.row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+}
+.row > div {
+  flex: 1;
+}
+.row .primary,
+.row .quiet {
+  flex: 1;
+  margin-top: 20px;
+}
+
+/* ── registration ─────────────────────────────────────────────────────────── */
+
+.steps {
+  display: flex;
+  gap: 6px;
+  list-style: none;
+  padding: 0;
+  margin: 0 0 24px;
+  font-size: 11px;
+  color: #a39cb2;
+}
+.steps li {
+  flex: 1;
+  padding-top: 8px;
+  border-top: 2px solid #e6e2ee;
+}
+.steps li.done {
+  border-color: #b9aecd;
+  color: #837c93;
+}
+.steps li[aria-current="step"] {
+  border-color: #4b3f63;
+  color: #4b3f63;
+  font-weight: 600;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-bottom: 12px;
+}
+.chip {
+  background: #f1eef7;
+  border-color: #e3dcef;
+  color: #574d6b;
+  padding: 6px 12px;
+  font-size: 13px;
+  border-radius: 999px;
+}
+
+.dilemma {
+  background: #fff;
+  border: 1px solid #ebe7f2;
+  border-radius: 14px;
+  padding: 15px;
+  margin-bottom: 11px;
+}
+.dilemma p {
+  margin: 0 0 11px;
+  font-size: 15px;
+}
+.pair {
+  display: flex;
+  gap: 9px;
+}
+.pick {
+  flex: 1;
+  background: #faf9fc;
+  border-color: #e3dcef;
+  color: #4a4457;
+  font-size: 14px;
+}
+.pick.on {
+  background: #4b3f63;
+  color: #fff;
+  border-color: #4b3f63;
+}
+
+/* ── what it heard ────────────────────────────────────────────────────────── */
+
+.retelling .heard {
+  background: #fff;
+  border-left: 3px solid #b9aecd;
+  border-radius: 0 12px 12px 0;
+  padding: 14px 16px;
+  white-space: pre-wrap;
+  line-height: 1.7;
+  font-size: 15px;
+}
+.roles {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.roles li {
+  background: #fff;
+  border: 1px solid #ebe7f2;
+  border-radius: 12px;
+  padding: 11px 14px;
+  margin-bottom: 8px;
+}
+.roles b {
+  display: block;
+  font-size: 15px;
+}
+.roles span {
+  font-size: 13px;
+  color: #837c93;
+}
+.quiet-card,
+.identity {
+  background: #fff;
+  border: 1px solid #ebe7f2;
+  border-radius: 12px;
+  padding: 13px 15px;
+  margin: 18px 0;
+}
+.quiet-card p {
+  margin: 0;
+  font-size: 15px;
+}
+.promise {
+  color: #706982;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.address {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: #837c93;
+  word-break: break-all;
+  margin: 3px 0;
+}
+
+/* ── the stage badge ──────────────────────────────────────────────────────── */
+
+.stage {
+  display: inline-block;
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: #f1eef7;
+  color: #6b5f85;
+  margin-left: 8px;
+  vertical-align: middle;
+  cursor: help;
+}
+.stage-2,
+.stage-3 {
+  background: #e6f2ea;
+  color: #2f6b47;
+}
+
+/* ── the conversation ─────────────────────────────────────────────────────── */
+
+.twin-chat > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.twin-chat > header b {
+  font-size: 19px;
+}
+.says {
+  color: #837c93;
+  font-size: 13px;
+  margin: 0 0 18px;
+}
+.away {
+  background: #f1eef7;
+  border-radius: 12px;
+  padding: 12px 15px;
+  margin-bottom: 16px;
+}
+.away .lead {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: #837c93;
+}
+.away .conclusion {
+  margin: 0;
+  font-size: 15px;
+  color: #4a4457;
+  line-height: 1.6;
+}
+
+.thread {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.bubble {
+  max-width: 86%;
+  padding: 12px 15px;
+  border-radius: 16px;
+  font-size: 15px;
+  line-height: 1.6;
+}
+.bubble p {
+  margin: 0;
+}
+.mine {
+  align-self: flex-end;
+  background: #4b3f63;
+  color: #fff;
+  border-bottom-right-radius: 5px;
+}
+.theirs {
+  align-self: flex-start;
+  background: #fff;
+  border: 1px solid #ebe7f2;
+  border-bottom-left-radius: 5px;
+}
+
+/* The line under a judgment is the judgment: how sure, by when, sealed, and -- once the day
+   comes -- whether it was right. Without it the twin is just a chatbot with opinions. */
+.theirs > footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+  align-items: center;
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px solid #f1eef7;
+  font-size: 11px;
+  color: #a39cb2;
+}
+.conf {
+  color: #6b5f85;
+  font-weight: 600;
+}
+.pending {
+  color: #a39cb2;
+}
+.right {
+  color: #2f6b47;
+  font-weight: 600;
+}
+.wrong {
+  color: #a4443f;
+  font-weight: 600;
+}
+.theirs code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  background: #faf9fc;
+  padding: 2px 6px;
+  border-radius: 5px;
+}
+
+.ask {
+  background: #f7f4fd;
+  border-color: #e3dcef;
+}
+.ask .q {
+  font-weight: 600;
+}
+.ask small {
+  display: block;
+  color: #837c93;
+  font-size: 12px;
+  margin: 5px 0 10px;
+}
+.ask .options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ask .options button {
+  text-align: left;
+  background: #fff;
+  border-color: #ddd9e6;
+  color: #4a4457;
+  font-size: 14px;
+  padding: 9px 13px;
+}
+.answered {
+  color: #6b5f85;
+  font-size: 14px;
+}
+
+.held {
+  text-align: center;
+  color: #a39cb2;
+  font-size: 12px;
+  margin: 0 0 14px;
+}
+
+.composer {
+  display: flex;
+  gap: 9px;
+  position: sticky;
+  bottom: 0;
+  background: #f6f6f9;
+  padding: 10px 0;
+}
+.composer input {
+  flex: 1;
+}
+.composer .primary {
+  width: auto;
+  margin: 0;
+  padding: 11px 20px;
+}
+
+.error {
+  background: #fdf1f0;
+  color: #a4443f;
+  border-radius: 10px;
+  padding: 10px 13px;
+  font-size: 14px;
+}

@@ -1,7 +1,9 @@
 /** Twin Backend v0.1. All calls use an authenticated same-origin gateway. */
 export type Dilemma = {
   id: string;
-  question: string;
+  /** The situation, in the person's terms. Named `text` by the service; this said `question`,
+   *  which typechecked against nothing and would have rendered as blank. */
+  text: string;
   options: { id: string; label: string }[];
 };
 export type RegistrationForm = {
@@ -91,10 +93,19 @@ export type ThreadMessage =
       answered_at: string | null;
       actions: { id: string; label: string }[] | null;
     };
+/** What it worked out during your quiet hours and could not say then. */
+export type WhileAway = {
+  count: number;
+  /** The whole lead sentence, already written by the service. */
+  lead: string;
+  judgment_id: string;
+  conclusion: string;
+  confidence: number;
+};
 export type Thread = {
   twin_id: string;
   messages: ThreadMessage[];
-  while_you_were_away: string | null;
+  while_you_were_away: WhileAway | null;
   /** Judgments it made today and chose not to say. The silence is part of the record. */
   held_today: number;
   stage: Stage;
