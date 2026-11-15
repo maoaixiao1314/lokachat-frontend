@@ -299,7 +299,7 @@ function Rail({ roles, wonId }: { roles: Role[]; wonId: string | null }) {
             <span className="face" style={{ background: faceColour(i) }}>
               {r.label.slice(0, 1)}
             </span>
-            <span className="nm">{r.label.slice(0, 5)}</span>
+            <span className="nm">{r.label}</span>
           </button>
         ))}
       </div>
@@ -798,7 +798,10 @@ function Dock({
             还没有判断。{"\n"}跟它说点什么，它说出口的每一句都会记在这儿。
           </div>
         ) : (
-          record.domains.map((d) => (
+          // Biggest ledger first: the one the twin is actually being judged on. Below it sit
+          // the side accounts -- reading someone's state is counted apart from being right
+          // about their work -- and those are small by nature, not by neglect.
+          [...record.domains].sort((a, b) => b.judged - a.judged).map((d) => (
             <article className="dom" key={d.domain}>
               <b>{d.domain}</b>
               <div className="g4">

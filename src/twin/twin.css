@@ -69,12 +69,12 @@
   border: 1px solid var(--line);
   background: radial-gradient(90% 80% at 50% 38%, #0b1320 0%, #060a11 55%, var(--void) 100%);
   display: grid;
-  grid-template-columns: 64px minmax(0, 1fr) 0;
+  grid-template-columns: 88px minmax(0, 1fr) 0;
   grid-template-rows: 46px minmax(0, 1fr);
   transition: grid-template-columns 0.35s ease;
 }
 .twin-root .win.dock-open {
-  grid-template-columns: 64px minmax(340px, 44fr) 56fr;
+  grid-template-columns: 88px minmax(340px, 44fr) 56fr;
 }
 /* Registration has no rail yet -- there are no voices until it has read them out of what the
    person wrote, and an empty rail beside the first question is furniture. */
@@ -258,12 +258,22 @@
   box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.08);
   flex: none;
 }
+/* Two lines, not one. These names are written by the model out of what the person said --
+   「死磕到底的架构」 -- and a single 64px line cut every one of them mid-word, which reads as
+   a bug rather than as a name. Clamping at two lines fits the eight characters the model is
+   asked for, and the full label is on the title attribute either way. */
 .twin-root .voice .nm {
   width: 100%;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  line-height: 1.25;
+  /* `anywhere`, not `break-all`: these names mix Chinese with Latin product words, and
+     break-all cut 「Web3」 into 「W / eb3」. This breaks only when a word genuinely does not fit. */
+  word-break: normal;
+  overflow-wrap: anywhere;
 }
 /* The one that won the last judgment. The prototype used this for a worker that was busy;
    here it answers the question the whole screen is for -- which part of you just spoke. */
