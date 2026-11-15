@@ -25,9 +25,14 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
 
-        # If the twin is started with LOKA_TWIN_TOKEN set, the secret belongs here and not
-        # in the page. Uncomment and fill in to match:
-        # proxy_set_header Authorization "Bearer PUT_THE_SAME_TOKEN_HERE";
+        # The twin's credential is attached here, never handed to the page: it is a shared
+        # secret that reads any twin, so a browser holding it is a browser that can be asked
+        # for it. This is the same substitution vite's dev proxy does.
+        #
+        # ${TWIN_TOKEN} is filled in at container start from the environment, by the nginx
+        # image's own template mechanism, so the secret is never in this file and never in
+        # git. Empty when the twin runs without a token, which that twin ignores.
+        proxy_set_header Authorization "Bearer ${TWIN_TOKEN}";
     }
 
     # The rest of /api is the account and points backend. It is not needed for the twin

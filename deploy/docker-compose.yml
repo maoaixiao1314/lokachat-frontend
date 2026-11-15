@@ -12,6 +12,14 @@ services:
       dockerfile: deploy/Dockerfile
     ports:
       - "8080:80"
+    environment:
+      # The twin's shared secret, the same value as LOKA_TWIN_TOKEN in the twin's own env.
+      # Put it in deploy/.env beside this file, which is gitignored; unset is correct only
+      # for a twin whose /health says auth: open.
+      TWIN_TOKEN: "${TWIN_TOKEN:-}"
+      # Only names starting with TWIN_ are substituted into the config, so nothing else in
+      # this container's environment can reach a template by accident.
+      NGINX_ENVSUBST_FILTER: "^TWIN_"
     # The twin is published on the host's own 8100 by the other compose file. From inside a
     # container, 127.0.0.1 is the container itself, so the host has to be named.
     extra_hosts:

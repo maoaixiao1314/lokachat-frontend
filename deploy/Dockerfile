@@ -14,6 +14,10 @@ COPY . .
 RUN npm run build
 
 FROM nginx:alpine
-COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
+# Under templates/ rather than conf.d/: the image's entrypoint runs envsubst over everything
+# here at start-up, which is how the twin's token reaches nginx without being written into a
+# file that git tracks. It substitutes only names that are in the environment, so nginx's own
+# $host and $uri come through untouched.
+COPY deploy/default.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 80
