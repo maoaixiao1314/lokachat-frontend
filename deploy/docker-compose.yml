@@ -1,0 +1,24 @@
+# The page, on the same host as the twin.
+#
+#   cd ~/lokachat-frontend && docker compose -f deploy/docker-compose.yml up -d --build
+#
+# Published on 8080 rather than 80 so it cannot collide with whatever already answers on
+# this host. Change the left-hand number to 80 once you know nothing else wants it.
+
+services:
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    ports:
+      - "8080:80"
+    # The twin is published on the host's own 8100 by the other compose file. From inside a
+    # container, 127.0.0.1 is the container itself, so the host has to be named.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

@@ -1,0 +1,15 @@
+# Everything the image builds for itself, or must not inherit from a developer's machine.
+#
+# node_modules is 1.6G and holds binaries compiled for whatever laptop installed them; copied
+# into a linux image they are both the slowest part of the build and the wrong architecture.
+# `npm ci` in the Dockerfile installs the same versions for the image's own platform.
+node_modules
+dist
+.git
+.DS_Store
+*.log
+.env
+.env.*
+coverage
+.vscode
+.idea
