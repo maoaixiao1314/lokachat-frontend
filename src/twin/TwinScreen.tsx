@@ -1,31 +1,37 @@
 /**
- * The twin, end to end: register, then the conversation.
+ * The twin, end to end: register, then talk.
  *
- * Three regions, following the prototype. The rail holds the voices this person argues with —
- * the roles the twin read out of what they wrote — and lights the one that won the last
- * judgment, which is the only place the ontology is visible at all and the only answer on
- * screen to "why did it say that". The stage carries the orb, what the twin is doing, and the
- * thread. The dock opens onto the record: settled counts, calibration, and what it held back.
+ * Two regions, after the voice assistant this is modelled on. The stage holds only this
+ * moment: the orb, what you just said in small type, and what it is saying now in large type,
+ * appearing as it is said -- subtitles, not a chat log. Everything else lives on the preview
+ * desk beside it: what it is looking at right now and what it learned from it, the whole
+ * conversation, what it may read, and what it learned today.
  *
- * Every word the person reads about themselves comes from the backend — the questions, the
- * retelling, the twin's own sentences — because the twin's voice is part of the ledger, and a
- * copy of it rephrased in the client would be a second, unsealed version of what it said.
+ * Every word the person reads about themselves comes from the backend -- the questions, the
+ * retelling, the twin's own sentences, what it learned -- because the twin's voice is part of
+ * the ledger, and a copy rephrased in the client would be a second, unsealed version of it.
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   twinClient,
+  type Digest,
+  type DigestItem,
   type Dilemma,
   type RegistrationForm,
   type Stage,
   type Thread,
+  type ThreadMessage,
   type TwinCreated,
   type TwinRecord,
   type Role,
   type Grants as GrantsBody,
+  type Job,
   type Source,
 } from "../api/twin";
 import Orb, { type OrbMode } from "./Orb";
 import "./twin.css";
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Survives a refresh so a demo does not start over, and so does nothing else. */
 const SAVED_TWIN = "loka.twin.id";
@@ -35,15 +41,24 @@ const client = twinClient({ getToken: async () => "via-proxy" });
 
 type Phase = "loading" | "register" | "retelling" | "thread" | "broken";
 
-/** The workbench's pages. 授权 is a page and not a modal because it is a standing fact about
- *  the twin -- what it may read right now -- not a step on the way to something else. */
-type Tab = "thread" | "record" | "voices" | "grants";
-const DOCK_TITLE: Record<Tab, string> = {
-  thread: "全部说过的话",
-  record: "它说对了多少",
-  voices: "它替你吵的那几架",
-  grants: "它能看到什么",
-};
+/** The preview desk's pages. */
+type Tab = "preview" | "history" | "grants" | "digest" | "record";
+const TABS: [Tab, string][] = [
+  ["preview", "预览"],
+  ["history", "对话记录"],
+  ["grants", "授权"],
+  ["digest", "今日学到"],
+  ["record", "战绩"],
+];
+
+/** What the composer asks for when it is asking for something to read. */
+const MATERIAL_HINT = "贴一个路径：代码仓库目录、.eml / .mbox 邮件、Telegram 的 result.json、.txt / .md";
+
+/** What the composer asks for when it is asking what to read up on. */
+const RESEARCH_HINT = "想让它查什么？比如：去查一下 Pearl 的 PoUW 是怎么做的";
+
+/** What it is saying right now, before the thread is reloaded from the ledger. */
+type Live = { said: string; reply: string; typing: boolean } | null;
 
 export default function TwinScreen() {
   const [phase, setPhase] = useState<Phase>("loading");
@@ -54,12 +69,38 @@ export default function TwinScreen() {
   const [roles, setRoles] = useState<Role[]>([]);
   const [record, setRecord] = useState<TwinRecord | null>(null);
   const [grants, setGrants] = useState<GrantsBody | null>(null);
-  const [sources, setSources] = useState<Source[] | null>(null);
-  const [dockOpen, setDockOpen] = useState(false);
-  const [tab, setTab] = useState<Tab>("thread");
+  const [sources, setSources] = useState<Source[]>([]);
+  const [digest, setDigest] = useState<Digest | null>(null);
+  const [picked, setPicked] = useState<string | null>(null);
+  // Open beside the stage on a wide screen; on a phone it covers the stage, so it waits.
+  const [deskOpen, setDeskOpen] = useState(() => window.innerWidth > 820);
+  const [tab, setTab] = useState<Tab>("preview");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState<OrbMode>("listen");
+  const [level, setLevel] = useState<number | undefined>(undefined);
+  const [live, setLive] = useState<Live>(null);
+  const [hint, setHint] = useState("");
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const reading = jobs.some((j) => j.status === "reading");
+
+  // While it is reading something in the background, look in on it every few seconds; when a
+  // reading finishes, what it learned is on the desk, so the desk is refreshed with it.
+  useEffect(() => {
+    if (!twinId || !reading) return;
+    const timer = setInterval(async () => {
+      const next = await client.jobs(twinId).catch(() => null);
+      if (!next) return;
+      setJobs(next.jobs);
+      if (!next.jobs.some((j) => j.status === "reading")) {
+        const seen = await client.sources(twinId).catch(() => null);
+        if (seen) setSources(seen.sources);
+        const done = next.jobs.find((j) => j.status === "done" && j.context_id);
+        if (done?.context_id) setPicked(done.context_id);
+      }
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [twinId, reading]);
 
   const load = useCallback(async (id: string) => {
     const [next, onto, seen] = await Promise.all([
@@ -82,7 +123,10 @@ export default function TwinScreen() {
         // sitting on a screen that cannot load.
         localStorage.removeItem(SAVED_TWIN);
         setTwinId(null);
-        setPhase("register");
+        client.registrationForm().then((f) => {
+          setForm(f);
+          setPhase("register");
+        });
       });
       return;
     }
@@ -105,8 +149,7 @@ export default function TwinScreen() {
     setError("");
     try {
       await work();
-      setMode("speak");
-      setTimeout(() => setMode("listen"), 2400);
+      setMode("listen");
     } catch (e) {
       setError(String((e as Error)?.message || e));
       setMode("listen");
@@ -119,6 +162,7 @@ export default function TwinScreen() {
     run(async () => {
       const made = await client.create(draft);
       localStorage.setItem(SAVED_TWIN, made.twin_id);
+      sessionStorage.removeItem(DRAFT);
       setTwinId(made.twin_id);
       setCreated(made);
       setRoles(made.retelling.roles);
@@ -128,18 +172,64 @@ export default function TwinScreen() {
   const enter = () =>
     run(async () => {
       if (!twinId) return;
-      // Give it a chance to speak first. A twin whose first screen is an empty thread waiting
+      // Give it a chance to speak first. A twin whose first screen is an empty stage waiting
       // for the person to start has not done anything yet.
       await client.tick(twinId).catch(() => undefined);
       await load(twinId);
     });
 
-  const say = (text: string) =>
-    run(async () => {
-      if (!twinId) return;
-      await client.tell(twinId, text);
+  /**
+   * Say something. Your line goes up as the small subtitle at once; the orb turns to thinking;
+   * then the reply is spoken onto the stage a character at a time, the orb rising and falling
+   * with it -- the rhythm a voice will give it once there is one. Only then is the thread
+   * reloaded from the ledger, which by now holds exactly what was shown.
+   */
+  const say = async (typed: string) => {
+    if (!twinId || busy) return;
+    // Asked what to look up, they may type just the topic; make it the request it is.
+    const text = hint === RESEARCH_HINT && !/查|搜|学|研究|了解/.test(typed) ? `去查一下 ${typed}` : typed;
+    setBusy(true);
+    setError("");
+    setHint("");
+    setLive({ said: text, reply: "", typing: true });
+    setMode("think");
+    try {
+      const res = await client.tell(twinId, text);
+      const full = (res.bubbles?.length ? res.bubbles : [res.reply]).filter(Boolean).join("\n");
+      if (res.job) {
+        const next = await client.jobs(twinId).catch(() => null);
+        if (next) setJobs(next.jobs);
+        setTab("preview");
+      }
+      if (res.opened) {
+        // It read something: open it on the desk while it talks about it.
+        const seen = await client.sources(twinId).catch(() => null);
+        if (seen) setSources(seen.sources);
+        setPicked(res.opened);
+        setTab("preview");
+        setDeskOpen(true);
+      }
+      setMode("speak");
+      // A beat per character, faster for long replies so nothing takes more than ~7s.
+      const step = Math.max(18, Math.min(60, 7000 / Math.max(1, full.length)));
+      for (let i = 1; i <= full.length; i++) {
+        const ch = full[i - 1];
+        setLive({ said: text, reply: full.slice(0, i), typing: true });
+        // Louder on syllables, a dip on punctuation and line breaks: what a voice would do.
+        setLevel(/[，。！？、\n,.!?]/.test(ch) ? 0.12 : 0.45 + Math.random() * 0.55);
+        await sleep(/[。！？\n]/.test(ch) ? step * 5 : step);
+      }
+      setLive({ said: text, reply: full, typing: false });
       await load(twinId);
-    });
+    } catch (e) {
+      setError(String((e as Error)?.message || e));
+    } finally {
+      setLevel(undefined);
+      setBusy(false);
+      setMode("listen");
+      setLive(null);
+    }
+  };
 
   const answer = (askId: string, option: string) =>
     run(async () => {
@@ -148,35 +238,41 @@ export default function TwinScreen() {
       await load(twinId);
     });
 
-  // The one gesture that changes what the twin knows. A prompt rather than a file picker
-  // because what the service can read is a repository, and the browser cannot hand it one:
-  // a directory picked here arrives as file contents with no history, and history is the
-  // whole of what makes a repository worth reading. A path or a clone URL names one.
-  const askForMaterial = () => {
-    const source = window.prompt(
-      "给它一个代码仓库。\n\n本机目录：/Users/you/work/thing\n或者公开仓库：https://github.com/you/thing",
-    );
-    if (source?.trim()) say(source.trim());
-  };
+  const askForMaterial = () => setHint(MATERIAL_HINT);
 
-  const openDock = (which: Tab) => {
+  const openTab = (which: Tab) => {
     setTab(which);
-    setDockOpen(true);
+    setDeskOpen(true);
     if (!twinId) return;
     if (which === "record") client.record(twinId).then(setRecord).catch(() => undefined);
     if (which === "grants") client.grants(twinId).then(setGrants).catch(() => undefined);
+    if (which === "digest") client.digest(twinId).then(setDigest).catch(() => undefined);
+    if (which === "preview") client.sources(twinId).then((s) => setSources(s.sources)).catch(() => undefined);
   };
+  const openSource = (contextId: string | null) => {
+    if (contextId && sources.some((s) => s.context_id === contextId)) setPicked(contextId);
+    openTab("preview");
+  };
+
   // One scope per call, and the answer is the whole new state: whether a scope is open is the
-  // service's to say, never this screen's. A failed call therefore leaves the switch where it
-  // was instead of showing access that was not opened.
+  // service's to say, never this screen's.
   const setGrant = (scope: string, granted: boolean) =>
     run(async () => {
       if (!twinId) return;
       setGrants(await client.setGrant(twinId, scope, granted));
     });
-  const toggleDock = () => {
-    if (dockOpen) return setDockOpen(false);
-    openDock(tab);
+
+  const mark = async (contextId: string | null, index: number, verdict: "right" | "wrong") => {
+    if (!twinId || !contextId) return;
+    try {
+      const res = await client.markLearned(twinId, contextId, index, verdict);
+      setSources((all) =>
+        all.map((s) => (s.context_id === contextId ? { ...s, learned: res.learned } : s)),
+      );
+      if (tab === "digest") setDigest(await client.digest(twinId));
+    } catch (e) {
+      setError(String((e as Error)?.message || e));
+    }
   };
 
   const startOver = () => {
@@ -189,24 +285,31 @@ export default function TwinScreen() {
 
   return (
     <div className="twin-root">
-      <div className={`win${bare ? " bare" : ""}${dockOpen ? " dock-open" : ""}`}>
+      <div className={`win${bare ? " bare" : " talking"}${!bare && deskOpen ? " dock-open" : ""}`}>
         <header className="bar">
           <div className="bar-left">
             <div className="logo" title="Loka">
               <i />
             </div>
-            <span className="bar-name">
-              {phase === "thread" ? "我的分身" : "正在认识你"}
-            </span>
+            <span className="bar-name">{phase === "thread" ? "我的分身" : "正在认识你"}</span>
+            {phase === "thread" && stage && (
+              <span className={`stage-badge${stage.can_assert ? " grown" : ""}`} title={stage.says}>
+                {stage.name}
+              </span>
+            )}
           </div>
           <div className="wbtns">
             {phase === "thread" && (
               <>
+                <button className="learned-pill" onClick={() => openTab("digest")}>
+                  <i />
+                  今天学到了什么
+                </button>
                 <button
-                  className={`wb${dockOpen ? " on" : ""}`}
-                  title="工作台"
-                  aria-label="工作台"
-                  onClick={toggleDock}
+                  className={`wb${deskOpen ? " on" : ""}`}
+                  title="预览台"
+                  aria-label="预览台"
+                  onClick={() => setDeskOpen(!deskOpen)}
                 >
                   <Icon name="record" />
                 </button>
@@ -218,12 +321,8 @@ export default function TwinScreen() {
           </div>
         </header>
 
-        {!bare && (
-          <Rail sources={sources} busy={busy} onAdd={askForMaterial} />
-        )}
-
         <main className="stage">
-          <Orb className="orb" mode={mode} />
+          {phase !== "thread" && <Orb className="orb" mode={mode} />}
 
           <div className="col">
             {phase === "loading" && <Status title="正在连接" sub="" stage={null} />}
@@ -248,40 +347,652 @@ export default function TwinScreen() {
             )}
 
             {phase === "thread" && thread && (
-              <Conversation
+              <VoiceStage
                 thread={thread}
-                stage={stage}
                 busy={busy}
                 mode={mode}
+                level={level}
+                live={live}
                 error={error}
+                hint={hint}
+                setHint={setHint}
+                opened={sources.find((s) => s.context_id === picked) ?? null}
+                reading={jobs.filter((j) => j.status === "reading")}
                 onSay={say}
                 onAnswer={answer}
-                onTick={enter}
-                onOpenThread={() => openDock("thread")}
+                onAddMaterial={askForMaterial}
+                onOpen={openTab}
+                onOpenSource={openSource}
               />
             )}
           </div>
         </main>
 
-        <section className="dock" aria-label="工作台">
-          <Dock
-            tab={tab}
-            setTab={openDock}
-            thread={thread}
-            record={record}
-            grants={grants}
-            roles={roles}
-            twinId={twinId}
-            busy={busy}
-            onAnswer={answer}
-            onGrant={setGrant}
-            onClose={() => setDockOpen(false)}
-          />
-        </section>
+        {phase === "thread" && (
+          <section className="dock" aria-label="预览台">
+            <Desk
+              onResearch={() => setHint(RESEARCH_HINT)}
+              jobs={jobs}
+              tab={tab}
+              setTab={openTab}
+              thread={thread}
+              record={record}
+              grants={grants}
+              sources={sources}
+              digest={digest}
+              picked={picked}
+              setPicked={setPicked}
+              roles={roles}
+              busy={busy}
+              onAnswer={answer}
+              onGrant={setGrant}
+              onMark={mark}
+              onAddMaterial={askForMaterial}
+              onOpenSource={openSource}
+              onRefreshDigest={() =>
+                twinId && client.digest(twinId, true).then(setDigest).catch(() => undefined)
+              }
+              onClose={() => setDeskOpen(false)}
+            />
+          </section>
+        )}
       </div>
     </div>
   );
 }
+
+// ──────────────────────────────── the stage ────────────────────────────────
+
+const STATUS: Record<OrbMode, string> = { listen: "在听", think: "在想", speak: "在说" };
+
+const dayOf = (iso: string | null) =>
+  iso ? new Date(iso).toLocaleDateString("zh-CN", { month: "long", day: "numeric" }) : "—";
+const clock = (iso: string) =>
+  new Date(iso).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+
+type AskMsg = Extract<ThreadMessage, { kind: "asked_by_twin" }>;
+const actionOf = (m: AskMsg, i: number) => {
+  const a = m.actions?.[i];
+  return typeof a === "string" ? a : a?.id;
+};
+
+/**
+ * This moment, and nothing else: the orb, your last line small, its line large.
+ *
+ * A subtitle card rather than a log, because a voice is heard once -- what was said before is
+ * on the desk under 对话记录 for anyone who wants it. The orb is the only thing always moving:
+ * green and slowly breathing while it listens, purple while it works an answer out, blue and
+ * pulsing with each character while it speaks.
+ */
+function VoiceStage({
+  thread,
+  busy,
+  mode,
+  level,
+  live,
+  error,
+  hint,
+  setHint,
+  opened,
+  reading,
+  onSay,
+  onAnswer,
+  onAddMaterial,
+  onOpen,
+  onOpenSource,
+}: {
+  reading: Job[];
+  thread: Thread;
+  busy: boolean;
+  mode: OrbMode;
+  level: number | undefined;
+  live: Live;
+  error: string;
+  hint: string;
+  setHint: (h: string) => void;
+  opened: Source | null;
+  onSay: (text: string) => void;
+  onAnswer: (askId: string, option: string) => void;
+  onAddMaterial: () => void;
+  onOpen: (tab: Tab) => void;
+  onOpenSource: (contextId: string | null) => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const input = useRef<HTMLInputElement>(null);
+  const msgs = thread.messages;
+
+  useEffect(() => {
+    if (!busy) input.current?.focus();
+  }, [busy, hint]);
+
+  const lastUser = [...msgs].reverse().find((m) => m.kind === "said_by_user");
+  const lastTwin = [...msgs].reverse().find((m) => m.kind !== "said_by_user");
+  const ask = lastTwin?.kind === "asked_by_twin" && !lastTwin.answer ? lastTwin : null;
+
+  const said = live ? live.said : lastUser?.text ?? "";
+  const speaking = live ? live.reply : lastTwin?.text ?? "";
+  const kept = !live && lastTwin?.kind === "said_by_twin" ? lastTwin : null;
+
+  const send = () => {
+    const text = draft.trim();
+    if (!text || busy) return;
+    setDraft("");
+    onSay(text);
+  };
+  const choose = (m: AskMsg, i: number) => {
+    const action = actionOf(m, i);
+    if (action === "point_repo") return onAddMaterial();
+    if (action === "tell_me") return setHint("说说你最近在忙什么…");
+    onAnswer(m.ask_id, m.options[i]);
+  };
+
+  return (
+    <div className="vstage">
+      <div className="vstatus" data-mode={mode}>
+        <i />
+        {STATUS[mode]}
+      </div>
+
+      <div className="vorb">
+        <Orb className="orb" mode={mode} level={level} />
+      </div>
+
+      <div className="subs" aria-live="polite">
+        {said && <p className="said">你：{said}</p>}
+        {speaking ? (
+          <p className="speaking">
+            {speaking}
+            {live?.typing && <span className="caret" />}
+          </p>
+        ) : (
+          <p className="speaking idle">它在等你开口。今天怎么样？</p>
+        )}
+        {ask && !live && (
+          <>
+            {ask.why && <small className="why">{ask.why}</small>}
+            <div className="quick">
+              {ask.options.map((o, j) => (
+                <button key={o} disabled={busy} onClick={() => choose(ask, j)}>
+                  {o}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+        {kept && (
+          <button className="kept" onClick={() => onOpen("record")}
+                  title={`这句里有个判断：「${kept.conclusion}」。它记在账本上，到期回头看说没说对。`}>
+            {kept.settlement
+              ? kept.settlement.correct ? "后来说对了" : "后来说错了"
+              : `记下了 · ${dayOf(kept.due_at)}回头看`}
+          </button>
+        )}
+        {reading.length > 0 && (
+          <button className="opened-link" onClick={() => onOpen("preview")}>
+            {reading.map((j) => `${j.kind === "research" ? "后台在查" : "后台在看"}：${j.name}`).join(" · ")}…
+          </button>
+        )}
+        {opened && live && (
+          <button className="opened-link" onClick={() => onOpenSource(opened.context_id)}>
+            已在右边打开：{opened.title}
+          </button>
+        )}
+      </div>
+
+      {error && <p className="err" role="alert">{error}</p>}
+
+      <form
+        className="vcomposer"
+        onSubmit={(e) => {
+          e.preventDefault();
+          send();
+        }}
+      >
+        <button type="button" className="mic" title="语音即将接入" aria-label="按住说话（语音即将接入）" disabled>
+          <Icon name="mic" />
+        </button>
+        <label htmlFor="twin-say" className="sr">跟它说</label>
+        <input
+          id="twin-say"
+          ref={input}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder={hint || "打字也行，Enter 发送"}
+          autoComplete="off"
+        />
+        <button className="ic" type="submit" disabled={busy || !draft.trim()} aria-label="发送">
+          <Icon name="send" />
+        </button>
+      </form>
+      <p className="vnote">语音即将接入 · 现在先打字</p>
+    </div>
+  );
+}
+
+// ──────────────────────────────── the preview desk ────────────────────────────────
+
+function Desk({
+  onResearch,
+  jobs,
+  tab,
+  setTab,
+  thread,
+  record,
+  grants,
+  sources,
+  digest,
+  picked,
+  setPicked,
+  roles,
+  busy,
+  onAnswer,
+  onGrant,
+  onMark,
+  onAddMaterial,
+  onOpenSource,
+  onRefreshDigest,
+  onClose,
+}: {
+  onResearch: () => void;
+  jobs: Job[];
+  tab: Tab;
+  setTab: (t: Tab) => void;
+  thread: Thread | null;
+  record: TwinRecord | null;
+  grants: GrantsBody | null;
+  sources: Source[];
+  digest: Digest | null;
+  picked: string | null;
+  setPicked: (id: string) => void;
+  roles: Role[];
+  busy: boolean;
+  onAnswer: (askId: string, option: string) => void;
+  onGrant: (scope: string, granted: boolean) => void;
+  onMark: (contextId: string | null, index: number, verdict: "right" | "wrong") => void;
+  onAddMaterial: () => void;
+  onOpenSource: (contextId: string | null) => void;
+  onRefreshDigest: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="dockx">
+      <div className="tabs">
+        {TABS.map(([id, label]) => (
+          <button key={id} className={`tab${tab === id ? " on" : ""}`} onClick={() => setTab(id)}>
+            {label}
+          </button>
+        ))}
+        <span className="tabs-gap" />
+        <button className="wb" aria-label="收起预览台" onClick={onClose}>
+          <Icon name="close" />
+        </button>
+      </div>
+      <div className="dbody">
+        {tab === "preview" && (
+          <Preview onResearch={onResearch} jobs={jobs} sources={sources} picked={picked} setPicked={setPicked} onMark={onMark}
+                   onAddMaterial={onAddMaterial} />
+        )}
+        {tab === "history" && <History thread={thread} busy={busy} onAnswer={onAnswer} />}
+        {tab === "grants" && (
+          <GrantsPage grants={grants} sources={sources} busy={busy} onGrant={onGrant}
+                      onOpenSource={onOpenSource} />
+        )}
+        {tab === "digest" && (
+          <DigestPage digest={digest} onMark={onMark} onOpenSource={onOpenSource}
+                      onRefresh={onRefreshDigest} />
+        )}
+        {tab === "record" && <RecordPage record={record} roles={roles} thread={thread} />}
+      </div>
+    </div>
+  );
+}
+
+const KIND_LABEL: Record<string, string> = {
+  mail: "邮件", chat: "聊天记录", docs: "文档", git: "代码仓库", observed: "观察", conversation: "今天的聊天",
+  web: "网上查的",
+};
+
+/** The excerpt with the words it learned from marked, so the quote is visible on the page. */
+function Highlighted({ text, quotes }: { text: string; quotes: string[] }) {
+  const marks = quotes.filter(Boolean);
+  if (!marks.length) return <>{text}</>;
+  const pattern = new RegExp(`(${marks.map((q) => q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`);
+  return (
+    <>
+      {text.split(pattern).map((part, i) =>
+        marks.includes(part) ? <mark key={i}>{part}</mark> : <React.Fragment key={i}>{part}</React.Fragment>,
+      )}
+    </>
+  );
+}
+
+/**
+ * What it is looking at, the words themselves, and what it took from them -- each line with a
+ * right / wrong the person can settle on the spot. Lines marked wrong are greyed here and
+ * never used again.
+ */
+function Preview({
+  onResearch,
+  jobs,
+  sources,
+  picked,
+  setPicked,
+  onMark,
+  onAddMaterial,
+}: {
+  onResearch: () => void;
+  jobs: Job[];
+  sources: Source[];
+  picked: string | null;
+  setPicked: (id: string) => void;
+  onMark: (contextId: string | null, index: number, verdict: "right" | "wrong") => void;
+  onAddMaterial: () => void;
+}) {
+  const doc = sources.find((s) => s.context_id === picked) ?? sources[0];
+  const pending = jobs.filter((j) => j.status !== "done").slice(0, 4);
+  const strip = pending.length > 0 && (
+    <div className="jobs">
+      {pending.map((j) => (
+        <p key={j.job_id} className={`job ${j.status}`}>
+          {j.status === "reading"
+            ? <><i />{j.kind === "research" ? "在网上查" : "后台在看"}「{j.name}」…</>
+            : <>{j.kind === "research" ? "没查成" : "没读成"}「{j.name}」：{j.error}</>}
+        </p>
+      ))}
+    </div>
+  );
+  if (!doc && strip) return <div className="preview-wait">{strip}<p className="gnote">看完了会打开在这里。</p></div>;
+  if (!doc)
+    return (
+      <div className="empty preview-empty">
+        <p>它还什么都没看过。</p>
+        <p className="gnote">
+          在下面的输入框里贴一个路径给它：代码仓库目录、导出的邮件（.eml / .mbox）、
+          Telegram 导出的 result.json、微信导出的 .txt，或者一份 .md 笔记。它会打开在这里，
+          边看边学。
+        </p>
+        <span className="pbtns">
+          <button className="primary" onClick={onAddMaterial}>给它看点东西</button>
+          <button className="primary" onClick={onResearch}>让它去网上查</button>
+        </span>
+      </div>
+    );
+  return (
+    <div className="preview">
+      <div className="plist" role="navigation" aria-label="它看过的">
+        <p>它看过的</p>
+        {sources.map((s) => (
+          <button key={s.context_id} className={s.context_id === doc.context_id ? "on" : ""}
+                  onClick={() => setPicked(s.context_id)}>
+            <span className={`pk k-${s.kind}`}>{KIND_LABEL[s.kind] ?? s.kind} · {clock(s.at)}</span>
+            <span className="pt">{s.title}</span>
+          </button>
+        ))}
+        <button className="padd" onClick={onAddMaterial}>+ 给它看点东西</button>
+        <button className="padd" onClick={onResearch}>+ 让它去网上查</button>
+      </div>
+      <article className="pdoc">
+        {strip}
+        <div className="pmeta">
+          <span className="ro">只读</span>
+          <span>{KIND_LABEL[doc.kind] ?? doc.kind}{doc.meta ? ` · ${doc.meta}` : ""}</span>
+        </div>
+        <h2>{doc.title}</h2>
+        <div className="ptext">
+          <Highlighted text={doc.excerpt} quotes={doc.learned.filter((l) => l.verdict !== "wrong").map((l) => l.quote)} />
+        </div>
+        {!!doc.links?.length && (
+          <div className="plinks">
+            <p>它读了这些网页</p>
+            {doc.links.map((l) => (
+              <a key={l.url} href={l.url} target="_blank" rel="noreferrer noopener">{l.title}</a>
+            ))}
+          </div>
+        )}
+        <section className="plearn">
+          <h3>它从这里学到</h3>
+          {doc.learned.length ? (
+            doc.learned.map((l, i) => (
+              <div key={i} className={`lrow${l.verdict === "wrong" ? " wrong" : ""}`}>
+                <p>{l.text}</p>
+                {l.verdict ? (
+                  <span className="lv">{l.verdict === "right" ? "你说对" : "你说不对，不会再用"}</span>
+                ) : (
+                  <span className="lbtns">
+                    <button onClick={() => onMark(doc.context_id, i, "right")}>对</button>
+                    <button onClick={() => onMark(doc.context_id, i, "wrong")}>不对</button>
+                  </span>
+                )}
+              </div>
+            ))
+          ) : (
+            <p className="gnote">这份里没看出什么关于你的新东西。</p>
+          )}
+        </section>
+      </article>
+    </div>
+  );
+}
+
+const partsOf = (m: { text: string; bubbles?: string[] }) =>
+  m.bubbles?.length ? m.bubbles : m.text.split("\n").filter((l) => l.trim());
+
+/** The whole conversation, in order. The stage only ever shows the last exchange. */
+function History({
+  thread,
+  busy,
+  onAnswer,
+}: {
+  thread: Thread | null;
+  busy: boolean;
+  onAnswer: (askId: string, option: string) => void;
+}) {
+  const bottom = useRef<HTMLDivElement>(null);
+  // Braces, not an expression: newer browsers return a Promise from scrollIntoView, and React
+  // takes whatever an effect returns as its cleanup -- it crashed the whole screen on the next
+  // tab switch.
+  useEffect(() => {
+    bottom.current?.scrollIntoView();
+  }, [thread?.messages.length]);
+  if (!thread || !thread.messages.length) return <div className="empty">还没说过话。</div>;
+  return (
+    <div className="chat history">
+      {thread.messages.map((m, i) => {
+        const prev = thread.messages[i - 1];
+        const time = !prev || new Date(m.at).getTime() - new Date(prev.at).getTime() > 600_000
+          ? <time className="when">{clock(m.at)}</time> : null;
+        if (m.kind === "said_by_user")
+          return <React.Fragment key={i}>{time}<div className="bubble mine">{m.text}</div></React.Fragment>;
+        if (m.kind === "asked_by_twin")
+          return (
+            <React.Fragment key={i}>
+              {time}
+              <div className="bubble theirs">{m.text}</div>
+              {m.answer && m.options.includes(m.answer) && <div className="bubble mine">{m.answer}</div>}
+              {!m.answer && (
+                <div className="quick">
+                  {m.options.map((o) => (
+                    <button key={o} disabled={busy} onClick={() => onAnswer(m.ask_id, o)}>{o}</button>
+                  ))}
+                </div>
+              )}
+            </React.Fragment>
+          );
+        return (
+          <React.Fragment key={i}>
+            {time}
+            {partsOf(m).map((p, j) => <div key={j} className="bubble theirs">{p}</div>)}
+          </React.Fragment>
+        );
+      })}
+      <div ref={bottom} />
+    </div>
+  );
+}
+
+/**
+ * What it may read, by source -- mail, chats, calendar, code, notes, browsing -- each with
+ * what it reads, what it never reads, and how it gets it today. A source with no reader yet
+ * says so: the switch records consent, and implying it moves data would be the one thing a
+ * permission screen must not do.
+ */
+function GrantsPage({
+  grants,
+  sources,
+  busy,
+  onGrant,
+  onOpenSource,
+}: {
+  grants: GrantsBody | null;
+  sources: Source[];
+  busy: boolean;
+  onGrant: (scope: string, granted: boolean) => void;
+  onOpenSource: (contextId: string | null) => void;
+}) {
+  if (!grants) return <div className="empty">正在读权限…</div>;
+  return (
+    <div className="grants">
+      <div>
+        <h2 className="ph">它能看什么</h2>
+        <p className="gnote">你打开哪个，它才看哪个。都是只读，随时能关。把文件贴给它，也会自动打开对应的这一项。</p>
+      </div>
+      {grants.may_request.map((s) => {
+        const latest = sources.find((x) => x.kind === s.id);
+        return (
+          <article className={`scope${s.granted ? " on" : ""}`} key={s.id}>
+            <div className="srow">
+              <div className="sname">
+                <b>{s.label}</b>
+                {s.via && <span>{s.via}</span>}
+                <small className={s.granted ? "ok" : ""}>
+                  {s.granted
+                    ? s.observer ? `已授权${latest ? ` · 最近看了「${latest.title}」` : ""}` : "已授权 · 读取还没接上，暂时看不到"
+                    : "没授权 · 它看不到"}
+                </small>
+              </div>
+              {s.granted && latest && (
+                <button className="sopen" onClick={() => onOpenSource(latest.context_id)}>在预览台打开</button>
+              )}
+              <button
+                role="switch"
+                aria-checked={s.granted}
+                aria-label={s.label}
+                className={`toggle${s.granted ? " on" : ""}`}
+                disabled={busy}
+                onClick={() => onGrant(s.id, !s.granted)}
+              >
+                <i />
+              </button>
+            </div>
+            {(s.will || s.wont) && (
+              <div className="swill">
+                <p><em className="yes">会看</em>{s.will}</p>
+                <p><em className="no">不看</em>{s.wont}</p>
+              </div>
+            )}
+          </article>
+        );
+      })}
+      <article className="scope never-box">
+        <b>它永远不会做</b>
+        <p>{grants.never.map((n) => n.label).join(" · ")}</p>
+        <p className="gnote">这几条没有开关，服务端直接拒绝。它只看、只学、只跟你说。</p>
+      </article>
+    </div>
+  );
+}
+
+/** Tonight's summary: what it learned today, grouped, each line traceable to where it read it. */
+function DigestPage({
+  digest,
+  onMark,
+  onOpenSource,
+  onRefresh,
+}: {
+  digest: Digest | null;
+  onMark: (contextId: string | null, index: number, verdict: "right" | "wrong") => void;
+  onOpenSource: (contextId: string | null) => void;
+  onRefresh: () => void;
+}) {
+  if (!digest) return <div className="empty">正在整理今天学到的…</div>;
+  const line = (it: DigestItem, key: number) => (
+    <div className="drow" key={key}>
+      <p>{it.text}</p>
+      <button onClick={() => onOpenSource(it.source.context_id)}>
+        {KIND_LABEL[it.source.kind] ?? it.source.title} ›
+      </button>
+    </div>
+  );
+  return (
+    <div className="digest">
+      <div className="dhead2">
+        <div>
+          <p className="gnote">{digest.day} · 每晚 10 点整理一次，打开这页时也会更新</p>
+          <h2 className="ph">{digest.headline}</h2>
+        </div>
+        <p className="gnote right">
+          {digest.seen}
+          {digest.skipped && <><br />{digest.skipped}</>}
+        </p>
+      </div>
+      {digest.groups.map((g) => (
+        <article className="dgroup" key={g.about}>
+          <p className={`dg dg-${g.about}`}>{g.head}</p>
+          {g.items.map((it, i) => line(it, i))}
+        </article>
+      ))}
+      {digest.unsure && (
+        <article className="dunsure">
+          <p className="dg">这条我拿不准，你帮我对一下</p>
+          <p>{digest.unsure.text}</p>
+          <div className="quick">
+            <button onClick={() => onMark(digest.unsure!.source.context_id, digest.unsure!.index, "right")}>对</button>
+            <button onClick={() => onMark(digest.unsure!.source.context_id, digest.unsure!.index, "wrong")}>不对</button>
+          </div>
+        </article>
+      )}
+      {!digest.total && (
+        <p className="gnote">给它看点东西，或者跟它多聊几句，晚上这里就会有内容。</p>
+      )}
+      <button className="ghost refresh" onClick={onRefresh}>现在重新整理</button>
+    </div>
+  );
+}
+
+/** The ledger: what it said it could be held to, and how that is going. */
+function RecordPage({ record, roles, thread }: { record: TwinRecord | null; roles: Role[]; thread: Thread | null }) {
+  return (
+    <div className="grants">
+      {!record ? (
+        <div className="empty">正在读账本…</div>
+      ) : !record.domains.length ? (
+        <div className="empty">还没有判断。它说出口、能事后查证的话，都会记在这儿。</div>
+      ) : (
+        [...record.domains].sort((a, b) => b.judged - a.judged).map((d) => (
+          <article className="dom" key={d.domain}>
+            <b>{d.domain}</b>
+            <div className="g4">
+              <div>已判断<i>{d.judged}</i></div>
+              <div>已对账<i>{d.settled}</i></div>
+              <div>说对<i>{d.hit_rate === null ? "—" : `${Math.round(d.hit_rate * 100)}%`}</i></div>
+              <div>忍住说对<i className="gold">{d.held_back.right_anyway}</i></div>
+            </div>
+            <p className="bar-to">
+              离校准还差 {Math.max(0, d.threshold.min_settled - d.settled)} 条
+              <span className="track">
+                <i style={{ width: `${Math.min(100, (d.settled / d.threshold.min_settled) * 100)}%` }} />
+              </span>
+            </p>
+          </article>
+        ))
+      )}
+      <h2 className="ph">你心里那几个声音</h2>
+      <Voices roles={roles} wonId={wonRole(thread, roles)} />
+    </div>
+  );
+}
+
+// ──────────────────────────────── shared bits ────────────────────────────────
 
 /** Which voice won the last thing the twin said, by matching its conclusion against stances. */
 function wonRole(thread: Thread | null, roles: Role[]): string | null {
@@ -318,55 +1029,7 @@ function Icon({ name }: { name: "record" | "reset" | "send" | "mic" | "close" })
   );
 }
 
-// ─────────────────────────────── rail: what it has read ───────────────────────────────
-
-/**
- * Everything the twin has actually been shown, and the way to show it more.
- *
- * This used to be the four voices, and they did not belong here. A voice is a phrase the
- * model wrote out of what someone typed -- 「算力沉没别回头」 -- and four of them stacked in a
- * narrow column with no context read as a word salad nobody recognised as their own. They
- * are still the twin's reasoning and still worth seeing, so they moved into the workbench
- * next to the record and the grants, where there is room to show what each one argues.
- *
- * What goes here instead is the one question somebody actually asks a twin standing in front
- * of them: what do you know about me. Not what it was permitted to read -- that is the
- * grants page -- but what it has read. Empty is the honest state for a new twin and is left
- * looking empty, with the way to fix it directly underneath.
- */
-function Rail({
-  sources,
-  busy,
-  onAdd,
-}: {
-  sources: Source[] | null;
-  busy: boolean;
-  onAdd: () => void;
-}) {
-  return (
-    <aside className="rail" aria-label="它看过的东西">
-      <h4>材料</h4>
-      <span className="bp">{sources ? `${sources.length} 份` : "…"}</span>
-      <div className="voices">
-        {sources?.length
-          ? sources.map((s, i) => (
-              <article className="src" key={`${s.at}-${i}`} title={s.summary}>
-                <b>{String(s.facts.commits ?? "—")}</b>
-                <span>个提交</span>
-                {typeof s.facts.branches_abandoned === "number" && (
-                  <em>{s.facts.branches_abandoned} 个分支没合回来</em>
-                )}
-                <time>{dayOf(s.at)}</time>
-              </article>
-            ))
-          : sources && <p className="none">它还什么都没看过</p>}
-      </div>
-      <button className="add-src" disabled={busy} onClick={onAdd}>
-        给它看点东西
-      </button>
-    </aside>
-  );
-}
+// ──────────────────────────────── status ────────────────────────────────
 
 function Status({
   title,
@@ -392,8 +1055,29 @@ function Status({
 
 // ───────────────────────────────── registration ─────────────────────────────────
 
-const STEPS = ["你是谁", "怎么做事", "手头的事", "什么时候别打扰"];
+/** Kept for the tab's lifetime, so a reload or a hot update does not wipe what was typed. */
+const DRAFT = "loka.twin.draft";
 
+type Draft = {
+  about: string;
+  name: string;
+  current: string;
+  years: string;
+  age: string;
+  background: string;
+  picks: Record<string, string>;
+  quiet: string;
+};
+
+/**
+ * One page, then talk.
+ *
+ * It was four screens -- who you are, four dilemmas, what you are on, when not to disturb --
+ * before you could say a word to it, which is a form and not an introduction. Two things are
+ * enough to start: what you do and what you are on. The rest is still here, folded, for
+ * whoever wants to say more; and the twin asks for what it is missing in the conversation,
+ * which is where a person would ask too.
+ */
 function Register({
   form,
   busy,
@@ -405,130 +1089,119 @@ function Register({
   error: string;
   onDone: (draft: Parameters<typeof client.create>[0]) => void;
 }) {
-  const [step, setStep] = useState(0);
-  const [about, setAbout] = useState("");
-  const [name, setName] = useState("");
-  const [years, setYears] = useState(form.years_bands[2] ?? form.years_bands[0]);
-  const [age, setAge] = useState(form.age_bands[1] ?? form.age_bands[0]);
-  const [background, setBackground] = useState("");
-  const [picks, setPicks] = useState<Record<string, string>>({});
-  const [current, setCurrent] = useState("");
-  const [quiet, setQuiet] = useState("");
-
-  const answeredAll = form.dilemmas.every((d) => picks[d.id]);
-  const titles = [form.copy.about, form.copy.dilemmas, form.copy.current_thing, form.copy.quiet];
-  const subs = [form.copy.about_hint, "", form.copy.current_thing_hint, form.copy.quiet_hint];
+  const [d, setD] = useState<Draft>(() => {
+    const blank: Draft = {
+      about: "", name: "", current: "", background: "", picks: {}, quiet: "",
+      years: form.years_bands[2] ?? form.years_bands[0],
+      age: form.age_bands[1] ?? form.age_bands[0],
+    };
+    try {
+      return { ...blank, ...JSON.parse(sessionStorage.getItem(DRAFT) || "{}") };
+    } catch {
+      return blank;
+    }
+  });
+  const set = <K extends keyof Draft>(k: K, v: Draft[K]) => {
+    const next = { ...d, [k]: v };
+    setD(next);
+    try {
+      sessionStorage.setItem(DRAFT, JSON.stringify(next));
+    } catch {
+      /* private mode: the draft just is not kept */
+    }
+  };
 
   function submit() {
     onDone({
-      display_name: name.trim() || "我",
-      about: about.trim(),
-      years_in_field: years,
-      age_band: age,
-      background: background.trim(),
-      dilemmas: picks,
-      current_thing: current.trim(),
-      quiet_text: quiet.trim(),
+      display_name: d.name.trim() || "我",
+      about: d.about.trim(),
+      years_in_field: d.years,
+      age_band: d.age,
+      background: d.background.trim(),
+      dilemmas: d.picks,
+      current_thing: d.current.trim(),
+      quiet_text: d.quiet.trim(),
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     });
   }
 
   return (
     <>
-      <Status title={titles[step]} sub={subs[step]} stage={null} />
-      <ol className="steps" aria-label="注册进度">
-        {STEPS.map((label, i) => (
-          <li key={label} aria-current={i === step ? "step" : undefined}
-              className={i < step ? "done" : ""}>
-            {label}
-          </li>
-        ))}
-      </ol>
+      <Status title="先认识一下" sub="两句话就够，剩下的聊着聊着它就知道了" stage={null} />
 
       <div className="form">
-        {step === 0 && (
-          <>
-            <div className="chips">
-              {form.field_suggestions.map((s) => (
-                <button key={s} type="button" className="chip"
-                        onClick={() => setAbout(about ? `${about}，${s}` : s)}>
-                  {s}
-                </button>
-              ))}
-            </div>
-            <textarea className="field" rows={3} value={about}
-                      onChange={(e) => setAbout(e.target.value)}
-                      placeholder="做审计的，自己也炒币，最近仓位跌得厉害" />
+        <label>你是做什么的</label>
+        <div className="chips">
+          {form.field_suggestions.map((s) => (
+            <button key={s} type="button" className="chip"
+                    onClick={() => set("about", d.about ? `${d.about}，${s}` : s)}>
+              {s}
+            </button>
+          ))}
+        </div>
+        <textarea className="field" rows={2} value={d.about}
+                  onChange={(e) => set("about", e.target.value)}
+                  placeholder="做审计的，自己也炒币，最近仓位跌得厉害" />
+        <div className="row">
+          <div>
             <label>怎么称呼你</label>
-            <input value={name} onChange={(e) => setName(e.target.value)} maxLength={24}
+            <input value={d.name} onChange={(e) => set("name", e.target.value)} maxLength={24}
                    placeholder="阿哲" />
-            <div className="row">
-              <div>
-                <label>干了多久</label>
-                <select value={years} onChange={(e) => setYears(e.target.value)}>
-                  {form.years_bands.map((b) => <option key={b}>{b}</option>)}
-                </select>
-              </div>
-              <div>
-                <label>年龄段</label>
-                <select value={age} onChange={(e) => setAge(e.target.value)}>
-                  {form.age_bands.map((b) => <option key={b}>{b}</option>)}
-                </select>
-              </div>
-            </div>
-            <label>还有什么它该知道的</label>
-            <textarea className="field" rows={2} value={background}
-                      onChange={(e) => setBackground(e.target.value)}
-                      placeholder="大所出来的，习惯先查账再下结论" />
-          </>
-        )}
+          </div>
+        </div>
+        <label>最近手头在忙什么（可以不填）</label>
+        <textarea className="field" rows={2} value={d.current}
+                  onChange={(e) => set("current", e.target.value)}
+                  placeholder="仓位又跌了 5 个点，在犹豫要不要补仓" />
 
-        {step === 1 &&
-          form.dilemmas.map((d: Dilemma) => (
-            <article key={d.id} className="dilemma">
-              <p>{d.text}</p>
+        <details className="more-about">
+          <summary>多说一点（都可以不填）</summary>
+          <div className="row">
+            <div>
+              <label>干了多久</label>
+              <select value={d.years} onChange={(e) => set("years", e.target.value)}>
+                {form.years_bands.map((b) => <option key={b}>{b}</option>)}
+              </select>
+            </div>
+            <div>
+              <label>年龄段</label>
+              <select value={d.age} onChange={(e) => set("age", e.target.value)}>
+                {form.age_bands.map((b) => <option key={b}>{b}</option>)}
+              </select>
+            </div>
+          </div>
+          <label>还有什么它该知道的</label>
+          <textarea className="field" rows={2} value={d.background}
+                    onChange={(e) => set("background", e.target.value)}
+                    placeholder="大所出来的，习惯先查账再下结论" />
+          <label>{form.copy.dilemmas}</label>
+          {form.dilemmas.map((q: Dilemma) => (
+            <article key={q.id} className="dilemma">
+              <p>{q.text}</p>
               <div className="pair">
-                {d.options.map((o) => (
+                {q.options.map((o) => (
                   <button key={o.id} type="button"
-                          className={picks[d.id] === o.id ? "pick on" : "pick"}
-                          onClick={() => setPicks({ ...picks, [d.id]: o.id })}>
+                          className={d.picks[q.id] === o.id ? "pick on" : "pick"}
+                          onClick={() => set("picks", { ...d.picks, [q.id]: o.id })}>
                     {o.label}
                   </button>
                 ))}
               </div>
             </article>
           ))}
-
-        {step === 2 && (
-          <textarea className="field" rows={3} value={current}
-                    onChange={(e) => setCurrent(e.target.value)}
-                    placeholder="仓位又跌了 5 个点，在犹豫要不要补仓" />
-        )}
-
-        {step === 3 && (
-          <textarea className="field" rows={2} value={quiet}
-                    onChange={(e) => setQuiet(e.target.value)}
+          <label>{form.copy.quiet}</label>
+          <textarea className="field" rows={2} value={d.quiet}
+                    onChange={(e) => set("quiet", e.target.value)}
                     placeholder={form.copy.quiet_placeholder} />
-        )}
+        </details>
       </div>
 
       {error && <p className="err" role="alert">{error}</p>}
 
       <div className="actions">
-        {step > 0 && (
-          <button className="ghost" onClick={() => setStep(step - 1)}>上一步</button>
-        )}
-        {step < 3 ? (
-          <button className="primary"
-                  disabled={(step === 0 && !about.trim()) || (step === 1 && !answeredAll)}
-                  onClick={() => setStep(step + 1)}>
-            下一步
-          </button>
-        ) : (
-          <button className="primary" disabled={busy} onClick={submit}>
-            {busy ? "正在读你写的东西…" : "生成我的分身"}
-          </button>
-        )}
+        <button className="primary" disabled={busy || !d.about.trim()} onClick={submit}>
+          {busy ? "正在读你写的东西…" : "开始聊"}
+        </button>
       </div>
     </>
   );
@@ -568,389 +1241,24 @@ function Retelling({
           <h3>什么时候不打扰你</h3>
           {made.quiet_understood}
         </article>
-        <article className="note">
-          <h3>它的身份</h3>
+        <details className="note">
+          <summary>它的身份（技术信息）</summary>
           <p className="addr">{made.identity.npub}</p>
           <p className="addr">{made.identity.eth_address}</p>
-        </article>
+        </details>
         <p className="sub">{made.retelling.promise}</p>
       </div>
       <div className="actions">
         <button className="primary" disabled={busy} onClick={onEnter}>
-          {busy ? "它正在想…" : "开始"}
+          {busy ? "它正在想…" : "开始聊"}
         </button>
       </div>
     </>
   );
 }
 
-// ──────────────────────────────── the current turn ────────────────────────────────
+// ─────────────────────────────── the desk: 声音 ───────────────────────────────
 
-const SAYING: Record<OrbMode, [string, string]> = {
-  listen: ["我在听", "说点什么，它会先判断再开口"],
-  think: ["正在判断", "它在想该不该说、有多大把握"],
-  speak: ["正在说", "说出口的每一句都会被封存"],
-};
-
-const clock = (iso: string) =>
-  new Date(iso).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
-
-/** The settlement date, which is a day and never a time: nothing here comes due at 14:13. */
-const dayOf = (iso: string | null) =>
-  iso ? new Date(iso).toLocaleDateString("zh-CN", { month: "long", day: "numeric" }) : "—";
-
-/**
- * The stage carries one turn: what was just said, and what the twin said back. The thread is
- * in the dock, because a scrolling log in front of the orb turns the screen into a transcript
- * with an ornament on top — the orb is there to say what is happening right now, and that only
- * works if it has the room to.
- *
- * The exception is an open question. That is the one thing on screen waiting on the person, so
- * it takes the twin's half of the stage until it is answered.
- */
-function Conversation({
-  thread,
-  stage,
-  busy,
-  mode,
-  error,
-  onSay,
-  onAnswer,
-  onTick,
-  onOpenThread,
-}: {
-  thread: Thread;
-  stage: Stage | null;
-  busy: boolean;
-  mode: OrbMode;
-  error: string;
-  onSay: (text: string) => void;
-  onAnswer: (askId: string, option: string) => void;
-  onTick: () => void;
-  onOpenThread: () => void;
-}) {
-  const [draft, setDraft] = useState("");
-
-  const asking = [...thread.messages]
-    .reverse()
-    .find((m) => m.kind === "asked_by_twin" && !m.answer);
-  const lastUser = [...thread.messages].reverse().find((m) => m.kind === "said_by_user");
-  const lastTwin = [...thread.messages]
-    .reverse()
-    .find((m) => m.kind === "said_by_twin" || m.kind === "replied_by_twin");
-
-  const send = () => {
-    const text = draft.trim();
-    if (!text || busy) return;
-    setDraft("");
-    onSay(text);
-  };
-
-  return (
-    <>
-      <Status title={SAYING[mode][0]} sub={SAYING[mode][1]} stage={stage} />
-
-      {/* It reached a view during the hours you told it not to interrupt, and kept it. Showing
-          the conclusion is the point: the restriction delayed it, it did not delete it. */}
-      {thread.while_you_were_away && (
-        <article className="away">
-          <p className="lead">{thread.while_you_were_away.lead}</p>
-          <p className="conclusion">{thread.while_you_were_away.conclusion}</p>
-        </article>
-      )}
-
-      <div className="turn">
-      {/* The exchange and the standing ask are both on screen, never one instead of the other.
-          They used to be a ternary, which meant an unanswered ask hid the conversation
-          completely -- and the twin's first act is now to ask for material, so from the
-          twin's first minute everything the person typed and everything it answered went
-          into a region that was not being rendered. Asked it a question, got nothing back,
-          and the reply was there the whole time.
-
-          The exchange goes first because it is the newer of the two. An ask with five options
-          is tall enough to push a reply off the bottom of the stage, and the thing somebody
-          just said is not the thing to make them scroll for. */}
-      {(lastUser || lastTwin) && (
-        <div className="cards">
-          <article className={`card${lastUser ? "" : " empty-card"}`}>
-            <div className="h">
-              <span>你</span>
-              {lastUser && <time>{clock(lastUser.at)}</time>}
-            </div>
-            <div className="t">{lastUser?.text ?? "还没说什么"}</div>
-          </article>
-          <article className={`card${lastTwin ? "" : " empty-card"}`}>
-            <div className="h">
-              <span>它</span>
-              {lastTwin && <time>{clock(lastTwin.at)}</time>}
-            </div>
-            {/* The claim alone, at the size of the thing it is. The sealed sentence also
-                carries the rule that fired, the stake, what it was going on, the date and
-                the caveat, and printed as one paragraph the judgment is the part nobody can
-                find -- the complaint was literally "这是啥？押什么七成？". Same words, in the
-                order someone reads them: what it thinks, then what it is risking on it. The
-                whole sentence is still in the thread, unchanged, because that is what was
-                sealed. */}
-            {lastTwin?.kind === "said_by_twin" ? (
-              <>
-                <div className="t claim">{lastTwin.conclusion}</div>
-                <div className="meta">
-                  <span className="stake" title="它押在这句话上的把握">
-                    把握 {Math.round(lastTwin.confidence * 100)}%
-                  </span>
-                  <span title="到这天拿真实结果对账">{dayOf(lastTwin.due_at)} 对账</span>
-                  {lastTwin.confidence_state !== "calibrated" && (
-                    <span className="warn" title="还没有足够的对账记录来校准这个数">
-                      这个数还不准
-                    </span>
-                  )}
-                </div>
-                <div className="seal">
-                  {lastTwin.settlement ? (
-                    <span className={lastTwin.settlement.correct ? "right" : "wrong"}>
-                      {lastTwin.settlement.correct ? "说对了" : "说错了"}
-                    </span>
-                  ) : (
-                    <span>还没到期</span>
-                  )}
-                  <span title={`封存哈希 ${lastTwin.seal_hash}`}>
-                    🔒 {lastTwin.seal_hash.slice(0, 8)}
-                  </span>
-                </div>
-              </>
-            ) : (
-              <div className="t">{lastTwin?.text ?? "等你开口"}</div>
-            )}
-          </article>
-        </div>
-      )}
-      {asking && asking.kind === "asked_by_twin" && (
-        <div className="asking">
-          <p className="q">{asking.text}</p>
-          <small>{asking.why}</small>
-          <div className="options">
-            {asking.options.map((o) => (
-              <button key={o} disabled={busy} onClick={() => onAnswer(asking.ask_id, o)}>
-                {o}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-      </div>
-
-      <div className="ready">
-        <span className="lead">
-          {/* The silence is part of the record: a twin graded only on what it said would
-              learn that staying quiet is never wrong. */}
-          {thread.held_today > 0
-            ? `今天它忍住没说 ${thread.held_today} 条`
-            : `${thread.messages.length} 条记录`}
-        </span>
-        <button className="more" onClick={onOpenThread}>
-          看完整对话 →
-        </button>
-        <em>SEALED</em>
-      </div>
-
-      {error && <p className="err" role="alert">{error}</p>}
-
-      <form
-        className="composer"
-        onSubmit={(e) => {
-          e.preventDefault();
-          send();
-        }}
-      >
-        <button type="button" className="ic" title="语音（还没接）" disabled>
-          <Icon name="mic" />
-        </button>
-        <textarea
-          rows={1}
-          value={draft}
-          disabled={busy}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              send();
-            }
-          }}
-          placeholder="跟它说点什么…（Enter 发送）"
-        />
-        <span className="model">qwen3.5-9b</span>
-        <button type="button" className="ic" title="让它自己看一眼" disabled={busy}
-                onClick={onTick}>
-          <Icon name="record" />
-        </button>
-        <button className="ic" type="submit" disabled={busy || !draft.trim()} aria-label="发送">
-          <Icon name="send" />
-        </button>
-      </form>
-    </>
-  );
-}
-
-// ──────────────────────────────────── the dock ────────────────────────────────────
-
-/** The workbench: the whole thread, the record it adds up to, and what it may read. */
-function Dock({
-  tab,
-  setTab,
-  thread,
-  record,
-  grants,
-  roles,
-  twinId,
-  busy,
-  onAnswer,
-  onGrant,
-  onClose,
-}: {
-  tab: Tab;
-  setTab: (t: Tab) => void;
-  thread: Thread | null;
-  record: TwinRecord | null;
-  grants: GrantsBody | null;
-  roles: Role[];
-  twinId: string | null;
-  busy: boolean;
-  onAnswer: (askId: string, option: string) => void;
-  onGrant: (scope: string, granted: boolean) => void;
-  onClose: () => void;
-}) {
-  const bottom = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (tab === "thread") bottom.current?.scrollIntoView();
-  }, [tab, thread?.messages.length]);
-
-  return (
-    <div className="dockx">
-      <div className="tabs">
-        <button className={`tab${tab === "thread" ? " on" : ""}`} onClick={() => setTab("thread")}>
-          对话
-        </button>
-        <button className={`tab${tab === "record" ? " on" : ""}`} onClick={() => setTab("record")}>
-          战绩
-        </button>
-        <button className={`tab${tab === "voices" ? " on" : ""}`} onClick={() => setTab("voices")}>
-          声音
-        </button>
-        <button className={`tab${tab === "grants" ? " on" : ""}`} onClick={() => setTab("grants")}>
-          授权
-        </button>
-      </div>
-      <div className="dhead">
-        <b>{DOCK_TITLE[tab]}</b>
-        <button className="wb" aria-label="收起" onClick={onClose}>
-          <Icon name="close" />
-        </button>
-      </div>
-      <div className="dbody">
-        {tab === "thread" ? (
-          !thread || !thread.messages.length ? (
-            <div className="empty">还没说过话。</div>
-          ) : (
-            <div className="thread">
-              {thread.messages.map((m, i) => {
-                if (m.kind === "said_by_user")
-                  return <div key={i} className="bubble mine">{m.text}</div>;
-
-                // No footer: there is no stake, no date and no seal, because nothing was
-                // sealed. Dressing a remark up as a judgment is what the footer prevents.
-                if (m.kind === "replied_by_twin")
-                  return <div key={i} className="bubble theirs">{m.text}</div>;
-
-                if (m.kind === "asked_by_twin")
-                  return (
-                    <div key={i} className="bubble theirs ask">
-                      <p className="q">{m.text}</p>
-                      <small>{m.why}</small>
-                      {m.answer ? (
-                        <p className="answered">你答了：{m.answer}</p>
-                      ) : (
-                        <div className="options">
-                          {m.options.map((o) => (
-                            <button key={o} disabled={busy}
-                                    onClick={() => onAnswer(m.ask_id, o)}>
-                              {o}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  );
-
-                return (
-                  <div key={i} className="bubble theirs">
-                    <p>{m.text}</p>
-                    <footer>
-                      {m.confidence_state === "provisional" && <span>把握还没校准</span>}
-                      {m.settlement ? (
-                        <span className={m.settlement.correct ? "right" : "wrong"}>
-                          {m.settlement.correct ? "说对了" : "说错了"}
-                        </span>
-                      ) : (
-                        <span className="pending">还没到期</span>
-                      )}
-                      <code title={`封存哈希 ${m.seal_hash}`}>🔒 {m.seal_hash.slice(0, 8)}</code>
-                    </footer>
-                  </div>
-                );
-              })}
-              <div ref={bottom} />
-            </div>
-          )
-        ) : tab === "voices" ? (
-          <Voices roles={roles} wonId={wonRole(thread, roles)} />
-        ) : tab === "grants" ? (
-          <Grants grants={grants} twinId={twinId} busy={busy} onGrant={onGrant} />
-        ) : !record ? (
-          <div className="empty">正在读账本…</div>
-        ) : !record.domains.length ? (
-          <div className="empty">
-            还没有判断。{"\n"}跟它说点什么，它说出口的每一句都会记在这儿。
-          </div>
-        ) : (
-          // Biggest ledger first: the one the twin is actually being judged on. Below it sit
-          // the side accounts -- reading someone's state is counted apart from being right
-          // about their work -- and those are small by nature, not by neglect.
-          [...record.domains].sort((a, b) => b.judged - a.judged).map((d) => (
-            <article className="dom" key={d.domain}>
-              <b>{d.domain}</b>
-              <div className="g4">
-                <div>已判断<i>{d.judged}</i></div>
-                <div>已对账<i>{d.settled}</i></div>
-                <div>说对<i>{d.hit_rate === null ? "—" : `${Math.round(d.hit_rate * 100)}%`}</i></div>
-                {/* The one nobody else can show: it kept quiet and was right anyway. */}
-                <div>忍住说对<i className="gold">{d.held_back.right_anyway}</i></div>
-              </div>
-              <p className="bar-to">
-                离校准还差 {Math.max(0, d.threshold.min_settled - d.settled)} 条
-                <span className="track">
-                  <i style={{ width: `${Math.min(100, (d.settled / d.threshold.min_settled) * 100)}%` }} />
-                </span>
-              </p>
-            </article>
-          ))
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─────────────────────────────── the dock: 声音 ───────────────────────────────
-
-/**
- * The voices this person argues with, and which one just won.
- *
- * They were in the left rail as four bare phrases in a narrow column, and read as a word
- * salad nobody recognised as their own -- the complaint was literally 「这几个是啥？我的吗」.
- * They are not decoration: a voice is one option on the question the twin asks itself about
- * every situation, the one that wins is what it says, and editing one changes what it says
- * next. That is worth a page, with what each one argues and when it gets loud, and it is the
- * only answer on screen to "why did it say that".
- */
 function Voices({ roles, wonId }: { roles: Role[]; wonId: string | null }) {
   if (!roles.length) return <div className="empty">还没读出你的声音。</div>;
   return (
@@ -971,93 +1279,6 @@ function Voices({ roles, wonId }: { roles: Role[]; wonId: string | null }) {
           {r.loud_when && <p className="snone">什么时候最大声：{r.loud_when}</p>}
         </article>
       ))}
-    </div>
-  );
-}
-
-// ─────────────────────────────── the dock: 授权 ───────────────────────────────
-
-/**
- * What it may read, and what it will never do.
- *
- * Three rules this screen exists to keep, all of them from the whitepaper rather than from
- * taste. Registering opens nothing, so every switch starts off. One scope per tap, because a
- * single "allow everything" is the shape consent goes wrong in. And `never` is shown as a
- * statement with no control beside it -- the service refuses those scopes outright, so a
- * switch there would be theatre.
- *
- * The fourth rule is ours: a scope nothing reads says so. Three of the four currently feed
- * nothing, and a screen that collected that access anyway would be taking trust it has no use
- * for. `observer` comes from the service, so this stays true as observers get written rather
- * than drifting into a comment nobody updates.
- */
-function Grants({
-  grants,
-  twinId,
-  busy,
-  onGrant,
-}: {
-  grants: GrantsBody | null;
-  twinId: string | null;
-  busy: boolean;
-  onGrant: (scope: string, granted: boolean) => void;
-}) {
-  if (!grants) return <div className="empty">正在读权限…</div>;
-  return (
-    <div className="grants">
-      <p className="gnote">注册没有打开任何东西。下面每一项都要你单独点开，也可以随时关掉。</p>
-      {grants.may_request.map((s) => (
-        <article className={`scope${s.granted ? " on" : ""}`} key={s.id}>
-          <div className="srow">
-            <b>{s.label}</b>
-            <button
-              className={`sw${s.granted ? " on" : ""}`}
-              disabled={busy}
-              aria-pressed={s.granted}
-              onClick={() => onGrant(s.id, !s.granted)}
-            >
-              {s.granted ? "已开，点一下关掉" : "打开"}
-            </button>
-          </div>
-          <p className="swhy">{s.why}</p>
-          {/* The switch records consent; it does not move data, and on its own it never
-              could -- the reader runs on the person's machine, against a repository only
-              they can point at. So the scope that has a reader shows the command that runs
-              it. Without this the page was four switches that did nothing, which is worse
-              than no page: it says access was opened when nothing was. */}
-          {s.granted && s.observer === "git_observer" && (
-            <div className="srun">
-              <p>在你电脑上跑这行，它才真的看得到：</p>
-              <code className="cmd">
-                {`python -m loka_twin.observers.git_observer \\\n  --repo ~/你的仓库 \\\n  --twin ${twinId ?? "<twin_id>"} \\\n  --api http://127.0.0.1:8781`}
-              </code>
-              <p className="snone">
-                先加 <code>--dry-run</code> 看一眼要上传什么。出电脑的只有统计和文件名，
-                没有代码、没有 commit message、没有作者。
-              </p>
-            </div>
-          )}
-          {s.observer ? (
-            <p className="sreal">
-              由 <code>{s.observer}</code> 读，读到的东西会进它的判断。
-            </p>
-          ) : (
-            // Said plainly rather than hidden: the switch works and the grant is recorded,
-            // but nothing on our side reads this yet, and implying otherwise is the one thing
-            // a permission screen must not do.
-            <p className="snone">现在还没有东西在读这一项。打开只会记下你同意过，不会有数据流动。</p>
-          )}
-        </article>
-      ))}
-      <h5>它永远不会做的事</h5>
-      <ul className="never">
-        {grants.never.map((n) => (
-          <li key={n.id}>{n.label}</li>
-        ))}
-      </ul>
-      <p className="gnote">
-        这三条没有开关，是因为服务端直接拒绝——给它们留个开关，就等于说还可以商量。
-      </p>
     </div>
   );
 }

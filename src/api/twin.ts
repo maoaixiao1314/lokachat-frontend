@@ -93,13 +93,15 @@ export type ThreadMessage =
       kind: "replied_by_twin";
       at: string;
       text: string;
-      why_not: "acknowledgement" | "path" | "link";
+      bubbles?: string[];
+      why_not: string | null;
     }
   | {
       kind: "said_by_twin";
       at: string;
-      /** The whole utterance, exactly as it was sealed. */
+      /** What it said, in its own words. The claim inside it is `conclusion`. */
       text: string;
+      bubbles?: string[];
       /** The claim on its own. `text` carries the rule that fired, the claim, the stake, the
        *  basis, the date and the caveat in one paragraph, and read as one nobody can find the
        *  part that is the judgment. Lead with this; the rest belongs in the margin. */
@@ -121,7 +123,9 @@ export type ThreadMessage =
       options: string[];
       answer: string | null;
       answered_at: string | null;
-      actions: { id: string; label: string }[] | null;
+      /** Per option, in order: what choosing it does. `point_repo` opens the repository
+       *  prompt, `tell_me` hands the turn to the composer; anything else is a plain answer. */
+      actions: (string | { id: string; label: string })[] | null;
     };
 /** What it worked out during your quiet hours and could not say then. */
 export type WhileAway = {
@@ -168,6 +172,11 @@ export type Scope = {
   id: string;
   label: string;
   why: string;
+  /** How it gets this today, e.g. "导出的 .eml / .mbox", or "还没接上". */
+  via?: string;
+  /** What it reads under this scope, and what it never reads. Said on the grant screen. */
+  will?: string;
+  wont?: string;
   granted: boolean;
   /** What actually reads this scope today, or null. Null means granting it changes nothing,
    *  and the screen says so rather than letting a switch imply a reader that is not there. */
@@ -183,11 +192,58 @@ export type Grants = {
 /** One thing the twin has actually been shown. Not a grant (that is permission) and not a
  *  profile (that is what someone typed about themselves) -- this is what came through. */
 export type Source = {
+  context_id: string;
   at: string;
+  /** mail | chat | docs | git | observed */
   kind: string;
+  title: string;
+  meta: string;
   /** The paragraph it kept. Everything it knows from this reading is in here. */
   summary: string;
+  /** The words themselves, for the preview desk. */
+  excerpt: string;
+  learned: Learned[];
+  /** For something it read up on by itself: the pages it read, so they can be checked. */
+  links?: { title: string; url: string }[];
   facts: Record<string, unknown>;
+};
+/** One thing it learned from something it was shown. `quote` is always words on the page. */
+export type Learned = {
+  text: string;
+  quote: string;
+  about: "work" | "people" | "style";
+  verdict: "right" | "wrong" | null;
+};
+/** Something it is reading in the background, or finished reading lately. */
+export type Job = {
+  job_id: string;
+  /** read: something handed over · research: something it went to look up on the web */
+  kind: "read" | "research";
+  source: string;
+  name: string;
+  status: "reading" | "done" | "failed";
+  started_at: string;
+  finished_at: string | null;
+  context_id: string | null;
+  learned: number;
+  error: string | null;
+};
+export type DigestItem = {
+  text: string;
+  index: number;
+  confirmed: boolean;
+  source: { context_id: string | null; kind: string; title: string };
+};
+/** What it learned today, built from the record -- nothing in it without a row behind it. */
+export type Digest = {
+  twin_id: string;
+  day: string;
+  headline: string;
+  seen: string;
+  skipped: string;
+  groups: { about: string; head: string; items: DigestItem[] }[];
+  unsure: DigestItem | null;
+  total: number;
 };
 export class TwinRequestError extends Error {
   constructor(
@@ -268,6 +324,12 @@ export function twinClient({
       request<{
         twin_id: string;
         reply: string;
+        /** The reply as the chat messages it was written as, in order. One to three. */
+        bubbles?: string[];
+        /** When it read something it was handed: the source to open on the desk. */
+        opened?: string;
+        /** When it was handed something to read: the background job reading it. */
+        job?: Job;
         heard: string;
         ontology_version: number;
         rewrote_ontology: boolean;
@@ -303,6 +365,32 @@ export function twinClient({
         "GET",
         undefined,
         signal,
+      ),
+    digest: (id: string, refresh = false, signal?: AbortSignal) =>
+      request<Digest>(
+        `/v1/twins/${encodeURIComponent(id)}/digest${refresh ? "?refresh=true" : ""}`,
+        "GET",
+        undefined,
+        signal,
+      ),
+    research: (id: string, topic?: string) =>
+      request<{ twin_id: string; queued: boolean; job: Job; reply: string }>(
+        `/v1/twins/${encodeURIComponent(id)}/research`,
+        "POST",
+        { topic: topic ?? null },
+      ),
+    jobs: (id: string, signal?: AbortSignal) =>
+      request<{ twin_id: string; jobs: Job[] }>(
+        `/v1/twins/${encodeURIComponent(id)}/jobs`,
+        "GET",
+        undefined,
+        signal,
+      ),
+    markLearned: (id: string, contextId: string, index: number, verdict: "right" | "wrong") =>
+      request<{ context_id: string; learned: Learned[] }>(
+        `/v1/twins/${encodeURIComponent(id)}/learned`,
+        "POST",
+        { context_id: contextId, index, verdict },
       ),
     /** Everything it has actually been shown. The honest answer to "what does it know". */
     sources: (id: string, signal?: AbortSignal) =>
