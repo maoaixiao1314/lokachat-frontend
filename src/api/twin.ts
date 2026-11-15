@@ -70,6 +70,14 @@ export type TickResult = {
 /** One entry in the thread. The thread is built from the ledger, never from a display copy. */
 export type ThreadMessage =
   | { kind: "said_by_user"; at: string; text: string }
+  /** A reply with nothing sealed behind it: there was no claim to make, or it was handed
+   *  something it cannot open. Not a judgment, so it carries no stake, date or seal. */
+  | {
+      kind: "replied_by_twin";
+      at: string;
+      text: string;
+      why_not: "acknowledgement" | "path" | "link";
+    }
   | {
       kind: "said_by_twin";
       at: string;

@@ -419,6 +419,11 @@ function Conversation({
           if (m.kind === "said_by_user")
             return <div key={i} className="bubble mine">{m.text}</div>;
 
+          // No footer: there is no stake, no date and no seal, because nothing was sealed.
+          // Dressing a remark up as a judgment is the thing the footer exists to prevent.
+          if (m.kind === "replied_by_twin")
+            return <div key={i} className="bubble theirs plain">{m.text}</div>;
+
           if (m.kind === "asked_by_twin")
             return (
               <div key={i} className="bubble theirs ask">
