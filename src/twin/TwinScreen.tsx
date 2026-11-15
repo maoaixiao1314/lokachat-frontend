@@ -84,23 +84,6 @@ export default function TwinScreen() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const reading = jobs.some((j) => j.status === "reading");
 
-  // While it is reading something in the background, look in on it every few seconds; when a
-  // reading finishes, what it learned is on the desk, so the desk is refreshed with it.
-  useEffect(() => {
-    if (!twinId || !reading) return;
-    const timer = setInterval(async () => {
-      const next = await client.jobs(twinId).catch(() => null);
-      if (!next) return;
-      setJobs(next.jobs);
-      if (!next.jobs.some((j) => j.status === "reading")) {
-        const seen = await client.sources(twinId).catch(() => null);
-        if (seen) setSources(seen.sources);
-        const done = next.jobs.find((j) => j.status === "done" && j.context_id);
-        if (done?.context_id) setPicked(done.context_id);
-      }
-    }, 3000);
-    return () => clearInterval(timer);
-  }, [twinId, reading]);
 
   const load = useCallback(async (id: string) => {
     const [next, onto, seen] = await Promise.all([
@@ -113,6 +96,26 @@ export default function TwinScreen() {
     setSources(seen ? seen.sources : []);
     setPhase("thread");
   }, []);
+
+  // While it is reading something in the background, look in on it every few seconds; when a
+  // reading finishes, what it learned is on the desk, so the desk is refreshed with it.
+  useEffect(() => {
+    if (!twinId || !reading) return;
+    const timer = setInterval(async () => {
+      const next = await client.jobs(twinId).catch(() => null);
+      if (!next) return;
+      setJobs(next.jobs);
+      if (!next.jobs.some((j) => j.status === "reading")) {
+        // It comes back to say how it went ("查完了……" / "没找到……"), and that line is in the
+        // thread, so the thread is reloaded with the desk -- the stage shows it at once
+        // instead of sitting on "I'll go and look" until somebody refreshes.
+        await load(twinId).catch(() => undefined);
+        const done = next.jobs.find((j) => j.status === "done" && j.context_id);
+        if (done?.context_id) setPicked(done.context_id);
+      }
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [twinId, reading, load]);
 
   useEffect(() => {
     const saved = localStorage.getItem(SAVED_TWIN);
