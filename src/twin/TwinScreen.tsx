@@ -254,6 +254,7 @@ export default function TwinScreen() {
             thread={thread}
             record={record}
             grants={grants}
+            twinId={twinId}
             busy={busy}
             onAnswer={answer}
             onGrant={setGrant}
@@ -314,9 +315,12 @@ function Rail({ roles, wonId }: { roles: Role[]; wonId: string | null }) {
             className={`voice${r.id === wonId ? " won" : ""}`}
             title={`${r.label}${r.loud_when ? `\n什么时候最大声：${r.loud_when}` : ""}`}
           >
-            <span className="face" style={{ background: faceColour(i) }}>
-              {r.label.slice(0, 1)}
-            </span>
+            {/* A dot, not an initial. The label is a phrase the model wrote out of what this
+                person said -- 「想赶紧弄出来的」, 「PoUW 必须拿下」 -- and the first character
+                of a phrase is not an abbreviation of it. On screen it read as 想 / 觉 / 守 /
+                只: four characters that mean nothing and look like a rendering fault. The
+                colour is the identity; the name underneath is already the name. */}
+            <span className="face" style={{ background: faceColour(i) }} />
             <span className="nm">{r.label}</span>
           </button>
         ))}
@@ -512,9 +516,7 @@ function Retelling({
         <ul className="roles">
           {made.retelling.roles.map((r, i) => (
             <li key={r.id}>
-              <span className="face" style={{ background: faceColour(i) }}>
-                {r.label.slice(0, 1)}
-              </span>
+              <span className="face" style={{ background: faceColour(i) }} />
               <span>
                 <b>{r.label}</b>
                 <span>{r.loud_when}</span>
@@ -553,6 +555,10 @@ const SAYING: Record<OrbMode, [string, string]> = {
 
 const clock = (iso: string) =>
   new Date(iso).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+
+/** The settlement date, which is a day and never a time: nothing here comes due at 14:13. */
+const dayOf = (iso: string | null) =>
+  iso ? new Date(iso).toLocaleDateString("zh-CN", { month: "long", day: "numeric" }) : "—";
 
 /**
  * The stage carries one turn: what was just said, and what the twin said back. The thread is
@@ -615,19 +621,17 @@ function Conversation({
       )}
 
       <div className="turn">
-      {asking && asking.kind === "asked_by_twin" ? (
-        <div className="asking">
-          <p className="q">{asking.text}</p>
-          <small>{asking.why}</small>
-          <div className="options">
-            {asking.options.map((o) => (
-              <button key={o} disabled={busy} onClick={() => onAnswer(asking.ask_id, o)}>
-                {o}
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : (
+      {/* The exchange and the standing ask are both on screen, never one instead of the other.
+          They used to be a ternary, which meant an unanswered ask hid the conversation
+          completely -- and the twin's first act is now to ask for material, so from the
+          twin's first minute everything the person typed and everything it answered went
+          into a region that was not being rendered. Asked it a question, got nothing back,
+          and the reply was there the whole time.
+
+          The exchange goes first because it is the newer of the two. An ask with five options
+          is tall enough to push a reply off the bottom of the stage, and the thing somebody
+          just said is not the thing to make them scroll for. */}
+      {(lastUser || lastTwin) && (
         <div className="cards">
           <article className={`card${lastUser ? "" : " empty-card"}`}>
             <div className="h">
@@ -641,22 +645,57 @@ function Conversation({
               <span>它</span>
               {lastTwin && <time>{clock(lastTwin.at)}</time>}
             </div>
-            <div className="t">{lastTwin?.text ?? "等你开口"}</div>
-            {lastTwin?.kind === "said_by_twin" && (
-              <div className="seal">
-                {lastTwin.settlement ? (
-                  <span className={lastTwin.settlement.correct ? "right" : "wrong"}>
-                    {lastTwin.settlement.correct ? "说对了" : "说错了"}
+            {/* The claim alone, at the size of the thing it is. The sealed sentence also
+                carries the rule that fired, the stake, what it was going on, the date and
+                the caveat, and printed as one paragraph the judgment is the part nobody can
+                find -- the complaint was literally "这是啥？押什么七成？". Same words, in the
+                order someone reads them: what it thinks, then what it is risking on it. The
+                whole sentence is still in the thread, unchanged, because that is what was
+                sealed. */}
+            {lastTwin?.kind === "said_by_twin" ? (
+              <>
+                <div className="t claim">{lastTwin.conclusion}</div>
+                <div className="meta">
+                  <span className="stake" title="它押在这句话上的把握">
+                    把握 {Math.round(lastTwin.confidence * 100)}%
                   </span>
-                ) : (
-                  <span>还没到期</span>
-                )}
-                <span title={`封存哈希 ${lastTwin.seal_hash}`}>
-                  🔒 {lastTwin.seal_hash.slice(0, 8)}
-                </span>
-              </div>
+                  <span title="到这天拿真实结果对账">{dayOf(lastTwin.due_at)} 对账</span>
+                  {lastTwin.confidence_state !== "calibrated" && (
+                    <span className="warn" title="还没有足够的对账记录来校准这个数">
+                      这个数还不准
+                    </span>
+                  )}
+                </div>
+                <div className="seal">
+                  {lastTwin.settlement ? (
+                    <span className={lastTwin.settlement.correct ? "right" : "wrong"}>
+                      {lastTwin.settlement.correct ? "说对了" : "说错了"}
+                    </span>
+                  ) : (
+                    <span>还没到期</span>
+                  )}
+                  <span title={`封存哈希 ${lastTwin.seal_hash}`}>
+                    🔒 {lastTwin.seal_hash.slice(0, 8)}
+                  </span>
+                </div>
+              </>
+            ) : (
+              <div className="t">{lastTwin?.text ?? "等你开口"}</div>
             )}
           </article>
+        </div>
+      )}
+      {asking && asking.kind === "asked_by_twin" && (
+        <div className="asking">
+          <p className="q">{asking.text}</p>
+          <small>{asking.why}</small>
+          <div className="options">
+            {asking.options.map((o) => (
+              <button key={o} disabled={busy} onClick={() => onAnswer(asking.ask_id, o)}>
+                {o}
+              </button>
+            ))}
+          </div>
         </div>
       )}
       </div>
@@ -722,6 +761,7 @@ function Dock({
   thread,
   record,
   grants,
+  twinId,
   busy,
   onAnswer,
   onGrant,
@@ -732,6 +772,7 @@ function Dock({
   thread: Thread | null;
   record: TwinRecord | null;
   grants: GrantsBody | null;
+  twinId: string | null;
   busy: boolean;
   onAnswer: (askId: string, option: string) => void;
   onGrant: (scope: string, granted: boolean) => void;
@@ -817,7 +858,7 @@ function Dock({
             </div>
           )
         ) : tab === "grants" ? (
-          <Grants grants={grants} busy={busy} onGrant={onGrant} />
+          <Grants grants={grants} twinId={twinId} busy={busy} onGrant={onGrant} />
         ) : !record ? (
           <div className="empty">正在读账本…</div>
         ) : !record.domains.length ? (
@@ -870,10 +911,12 @@ function Dock({
  */
 function Grants({
   grants,
+  twinId,
   busy,
   onGrant,
 }: {
   grants: GrantsBody | null;
+  twinId: string | null;
   busy: boolean;
   onGrant: (scope: string, granted: boolean) => void;
 }) {
@@ -895,9 +938,26 @@ function Grants({
             </button>
           </div>
           <p className="swhy">{s.why}</p>
+          {/* The switch records consent; it does not move data, and on its own it never
+              could -- the reader runs on the person's machine, against a repository only
+              they can point at. So the scope that has a reader shows the command that runs
+              it. Without this the page was four switches that did nothing, which is worse
+              than no page: it says access was opened when nothing was. */}
+          {s.granted && s.observer === "git_observer" && (
+            <div className="srun">
+              <p>在你电脑上跑这行，它才真的看得到：</p>
+              <code className="cmd">
+                {`python -m loka_twin.observers.git_observer \\\n  --repo ~/你的仓库 \\\n  --twin ${twinId ?? "<twin_id>"} \\\n  --api http://127.0.0.1:8781`}
+              </code>
+              <p className="snone">
+                先加 <code>--dry-run</code> 看一眼要上传什么。出电脑的只有统计和文件名，
+                没有代码、没有 commit message、没有作者。
+              </p>
+            </div>
+          )}
           {s.observer ? (
             <p className="sreal">
-              打开之后由 <code>{s.observer}</code> 读，读到的东西会进它的判断。
+              由 <code>{s.observer}</code> 读，读到的东西会进它的判断。
             </p>
           ) : (
             // Said plainly rather than hidden: the switch works and the grant is recorded,

@@ -247,16 +247,12 @@
   color: var(--fg);
 }
 .twin-root .voice .face {
-  width: 36px;
-  height: 36px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
-  display: grid;
-  place-items: center;
-  font-size: 13px;
-  color: #06101c;
-  font-weight: 600;
   box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.08);
   flex: none;
+  margin-bottom: 1px;
 }
 /* Two lines, not one. These names are written by the model out of what the person said --
    「死磕到底的架构」 -- and a single 64px line cut every one of them mid-word, which reads as
@@ -895,15 +891,11 @@
   align-items: center;
 }
 .twin-root .roles .face {
-  width: 30px;
-  height: 30px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
-  display: grid;
-  place-items: center;
-  font-size: 12px;
-  color: #06101c;
-  font-weight: 600;
   flex: none;
+  margin-top: 5px;
 }
 .twin-root .roles b {
   display: block;
@@ -1217,4 +1209,65 @@
   border-radius: 9px;
   text-decoration: line-through;
   text-decoration-color: rgba(229, 72, 77, 0.5);
+}
+
+/* The command that actually makes a granted scope do something. Monospace and selectable:
+   it is meant to be copied into a terminal, not read. */
+.twin-root .srun {
+  margin-top: 9px;
+  padding: 9px 11px;
+  border-radius: 9px;
+  background: rgba(3, 5, 9, 0.6);
+  border: 1px solid var(--line);
+}
+.twin-root .srun p {
+  margin: 0;
+  font-size: 10.5px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+.twin-root .srun .cmd {
+  display: block;
+  margin: 7px 0;
+  font-family: var(--f-mono);
+  font-size: 10.5px;
+  line-height: 1.7;
+  color: var(--listen);
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: all;
+}
+.twin-root .srun code {
+  font-family: var(--f-mono);
+}
+
+/* The claim, at the size of the thing it is. It used to be one clause inside a paragraph
+   that also held the rule, the stake, the basis, the date and a caveat, and the judgment was
+   the part nobody could find in it. */
+.twin-root .card .t.claim {
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--fg);
+}
+.twin-root .card .meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 9px;
+}
+.twin-root .card .meta span {
+  font-size: 10px;
+  line-height: 19px;
+  padding: 0 8px;
+  border-radius: 99px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+.twin-root .card .meta .stake {
+  color: var(--speak);
+  border-color: rgba(156, 192, 255, 0.3);
+}
+.twin-root .card .meta .warn {
+  color: var(--busy);
+  border-color: rgba(242, 201, 76, 0.28);
 }

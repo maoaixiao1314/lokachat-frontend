@@ -98,7 +98,12 @@ export type ThreadMessage =
   | {
       kind: "said_by_twin";
       at: string;
+      /** The whole utterance, exactly as it was sealed. */
       text: string;
+      /** The claim on its own. `text` carries the rule that fired, the claim, the stake, the
+       *  basis, the date and the caveat in one paragraph, and read as one nobody can find the
+       *  part that is the judgment. Lead with this; the rest belongs in the margin. */
+      conclusion: string;
       judgment_id: string;
       tone: string;
       confidence: number;
