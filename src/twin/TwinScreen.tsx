@@ -22,6 +22,7 @@ import {
   type TwinRecord,
   type Role,
   type Grants as GrantsBody,
+  type Source,
 } from "../api/twin";
 import Orb, { type OrbMode } from "./Orb";
 import "./twin.css";
@@ -36,10 +37,11 @@ type Phase = "loading" | "register" | "retelling" | "thread" | "broken";
 
 /** The workbench's pages. 授权 is a page and not a modal because it is a standing fact about
  *  the twin -- what it may read right now -- not a step on the way to something else. */
-type Tab = "thread" | "record" | "grants";
+type Tab = "thread" | "record" | "voices" | "grants";
 const DOCK_TITLE: Record<Tab, string> = {
   thread: "全部说过的话",
   record: "它说对了多少",
+  voices: "它替你吵的那几架",
   grants: "它能看到什么",
 };
 
@@ -52,6 +54,7 @@ export default function TwinScreen() {
   const [roles, setRoles] = useState<Role[]>([]);
   const [record, setRecord] = useState<TwinRecord | null>(null);
   const [grants, setGrants] = useState<GrantsBody | null>(null);
+  const [sources, setSources] = useState<Source[] | null>(null);
   const [dockOpen, setDockOpen] = useState(false);
   const [tab, setTab] = useState<Tab>("thread");
   const [error, setError] = useState("");
@@ -59,12 +62,14 @@ export default function TwinScreen() {
   const [mode, setMode] = useState<OrbMode>("listen");
 
   const load = useCallback(async (id: string) => {
-    const [next, onto] = await Promise.all([
+    const [next, onto, seen] = await Promise.all([
       client.messages(id),
       client.ontology(id).catch(() => null),
+      client.sources(id).catch(() => null),
     ]);
     setThread(next);
     if (onto) setRoles(onto.roles);
+    setSources(seen ? seen.sources : []);
     setPhase("thread");
   }, []);
 
@@ -143,6 +148,17 @@ export default function TwinScreen() {
       await load(twinId);
     });
 
+  // The one gesture that changes what the twin knows. A prompt rather than a file picker
+  // because what the service can read is a repository, and the browser cannot hand it one:
+  // a directory picked here arrives as file contents with no history, and history is the
+  // whole of what makes a repository worth reading. A path or a clone URL names one.
+  const askForMaterial = () => {
+    const source = window.prompt(
+      "给它一个代码仓库。\n\n本机目录：/Users/you/work/thing\n或者公开仓库：https://github.com/you/thing",
+    );
+    if (source?.trim()) say(source.trim());
+  };
+
   const openDock = (which: Tab) => {
     setTab(which);
     setDockOpen(true);
@@ -203,7 +219,7 @@ export default function TwinScreen() {
         </header>
 
         {!bare && (
-          <Rail roles={roles} wonId={wonRole(thread, roles)} />
+          <Rail sources={sources} busy={busy} onAdd={askForMaterial} />
         )}
 
         <main className="stage">
@@ -254,6 +270,7 @@ export default function TwinScreen() {
             thread={thread}
             record={record}
             grants={grants}
+            roles={roles}
             twinId={twinId}
             busy={busy}
             onAnswer={answer}
@@ -301,30 +318,52 @@ function Icon({ name }: { name: "record" | "reset" | "send" | "mic" | "close" })
   );
 }
 
-// ──────────────────────────────── rail: the voices ────────────────────────────────
+// ─────────────────────────────── rail: what it has read ───────────────────────────────
 
-function Rail({ roles, wonId }: { roles: Role[]; wonId: string | null }) {
+/**
+ * Everything the twin has actually been shown, and the way to show it more.
+ *
+ * This used to be the four voices, and they did not belong here. A voice is a phrase the
+ * model wrote out of what someone typed -- 「算力沉没别回头」 -- and four of them stacked in a
+ * narrow column with no context read as a word salad nobody recognised as their own. They
+ * are still the twin's reasoning and still worth seeing, so they moved into the workbench
+ * next to the record and the grants, where there is room to show what each one argues.
+ *
+ * What goes here instead is the one question somebody actually asks a twin standing in front
+ * of them: what do you know about me. Not what it was permitted to read -- that is the
+ * grants page -- but what it has read. Empty is the honest state for a new twin and is left
+ * looking empty, with the way to fix it directly underneath.
+ */
+function Rail({
+  sources,
+  busy,
+  onAdd,
+}: {
+  sources: Source[] | null;
+  busy: boolean;
+  onAdd: () => void;
+}) {
   return (
-    <aside className="rail" aria-label="你心里的声音">
-      <h4>声音</h4>
-      <span className="bp">{roles.length} 个</span>
+    <aside className="rail" aria-label="它看过的东西">
+      <h4>材料</h4>
+      <span className="bp">{sources ? `${sources.length} 份` : "…"}</span>
       <div className="voices">
-        {roles.map((r, i) => (
-          <button
-            key={r.id}
-            className={`voice${r.id === wonId ? " won" : ""}`}
-            title={`${r.label}${r.loud_when ? `\n什么时候最大声：${r.loud_when}` : ""}`}
-          >
-            {/* A dot, not an initial. The label is a phrase the model wrote out of what this
-                person said -- 「想赶紧弄出来的」, 「PoUW 必须拿下」 -- and the first character
-                of a phrase is not an abbreviation of it. On screen it read as 想 / 觉 / 守 /
-                只: four characters that mean nothing and look like a rendering fault. The
-                colour is the identity; the name underneath is already the name. */}
-            <span className="face" style={{ background: faceColour(i) }} />
-            <span className="nm">{r.label}</span>
-          </button>
-        ))}
+        {sources?.length
+          ? sources.map((s, i) => (
+              <article className="src" key={`${s.at}-${i}`} title={s.summary}>
+                <b>{String(s.facts.commits ?? "—")}</b>
+                <span>个提交</span>
+                {typeof s.facts.branches_abandoned === "number" && (
+                  <em>{s.facts.branches_abandoned} 个分支没合回来</em>
+                )}
+                <time>{dayOf(s.at)}</time>
+              </article>
+            ))
+          : sources && <p className="none">它还什么都没看过</p>}
       </div>
+      <button className="add-src" disabled={busy} onClick={onAdd}>
+        给它看点东西
+      </button>
     </aside>
   );
 }
@@ -761,6 +800,7 @@ function Dock({
   thread,
   record,
   grants,
+  roles,
   twinId,
   busy,
   onAnswer,
@@ -772,6 +812,7 @@ function Dock({
   thread: Thread | null;
   record: TwinRecord | null;
   grants: GrantsBody | null;
+  roles: Role[];
   twinId: string | null;
   busy: boolean;
   onAnswer: (askId: string, option: string) => void;
@@ -791,6 +832,9 @@ function Dock({
         </button>
         <button className={`tab${tab === "record" ? " on" : ""}`} onClick={() => setTab("record")}>
           战绩
+        </button>
+        <button className={`tab${tab === "voices" ? " on" : ""}`} onClick={() => setTab("voices")}>
+          声音
         </button>
         <button className={`tab${tab === "grants" ? " on" : ""}`} onClick={() => setTab("grants")}>
           授权
@@ -857,6 +901,8 @@ function Dock({
               <div ref={bottom} />
             </div>
           )
+        ) : tab === "voices" ? (
+          <Voices roles={roles} wonId={wonRole(thread, roles)} />
         ) : tab === "grants" ? (
           <Grants grants={grants} twinId={twinId} busy={busy} onGrant={onGrant} />
         ) : !record ? (
@@ -889,6 +935,42 @@ function Dock({
           ))
         )}
       </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────── the dock: 声音 ───────────────────────────────
+
+/**
+ * The voices this person argues with, and which one just won.
+ *
+ * They were in the left rail as four bare phrases in a narrow column, and read as a word
+ * salad nobody recognised as their own -- the complaint was literally 「这几个是啥？我的吗」.
+ * They are not decoration: a voice is one option on the question the twin asks itself about
+ * every situation, the one that wins is what it says, and editing one changes what it says
+ * next. That is worth a page, with what each one argues and when it gets loud, and it is the
+ * only answer on screen to "why did it say that".
+ */
+function Voices({ roles, wonId }: { roles: Role[]; wonId: string | null }) {
+  if (!roles.length) return <div className="empty">还没读出你的声音。</div>;
+  return (
+    <div className="grants">
+      <p className="gnote">
+        这是我从你填的那几道两难题里读出来的，不是我编的。每次开口前它们会吵一架，
+        赢的那个就是它说出口的话。读错了就直接跟它说。
+      </p>
+      {roles.map((r, i) => (
+        <article className={`scope${r.id === wonId ? " on" : ""}`} key={r.id}>
+          <div className="srow">
+            <b>
+              <span className="face" style={{ background: faceColour(i) }} /> {r.label}
+            </b>
+            {r.id === wonId && <span className="sw on">刚才是它赢了</span>}
+          </div>
+          <p className="swhy">「{r.stance}」</p>
+          {r.loud_when && <p className="snone">什么时候最大声：{r.loud_when}</p>}
+        </article>
+      ))}
     </div>
   );
 }

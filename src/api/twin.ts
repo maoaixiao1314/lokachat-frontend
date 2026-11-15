@@ -180,6 +180,15 @@ export type Grants = {
   never: { id: string; label: string }[];
   grants: { scope: string; granted_at: string; revoked_at: string | null }[];
 };
+/** One thing the twin has actually been shown. Not a grant (that is permission) and not a
+ *  profile (that is what someone typed about themselves) -- this is what came through. */
+export type Source = {
+  at: string;
+  kind: string;
+  /** The paragraph it kept. Everything it knows from this reading is in here. */
+  summary: string;
+  facts: Record<string, unknown>;
+};
 export class TwinRequestError extends Error {
   constructor(
     message: string,
@@ -293,6 +302,22 @@ export function twinClient({
         `/v1/twins/${encodeURIComponent(id)}/record`,
         "GET",
         undefined,
+        signal,
+      ),
+    /** Everything it has actually been shown. The honest answer to "what does it know". */
+    sources: (id: string, signal?: AbortSignal) =>
+      request<{ twin_id: string; sources: Source[] }>(
+        `/v1/twins/${encodeURIComponent(id)}/sources`,
+        "GET",
+        undefined,
+        signal,
+      ),
+    /** Hand it a repository, by path on this machine or by clone URL. */
+    addMaterial: (id: string, source: string, signal?: AbortSignal) =>
+      request<{ read: string; reply: string; facts: Record<string, unknown> }>(
+        `/v1/twins/${encodeURIComponent(id)}/material`,
+        "POST",
+        { source },
         signal,
       ),
     /** What it may ask for, what it has, and what it will never do. */
