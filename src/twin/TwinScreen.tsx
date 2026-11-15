@@ -42,6 +42,7 @@ export default function TwinScreen() {
   const [roles, setRoles] = useState<Role[]>([]);
   const [record, setRecord] = useState<TwinRecord | null>(null);
   const [dockOpen, setDockOpen] = useState(false);
+  const [tab, setTab] = useState<"thread" | "record">("thread");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState<OrbMode>("listen");
@@ -131,10 +132,15 @@ export default function TwinScreen() {
       await load(twinId);
     });
 
+  const openDock = (which: "thread" | "record") => {
+    setTab(which);
+    setDockOpen(true);
+    if (which === "record" && twinId)
+      client.record(twinId).then(setRecord).catch(() => undefined);
+  };
   const toggleDock = () => {
-    const next = !dockOpen;
-    setDockOpen(next);
-    if (next && twinId) client.record(twinId).then(setRecord).catch(() => undefined);
+    if (dockOpen) return setDockOpen(false);
+    openDock(tab);
   };
 
   const startOver = () => {
@@ -162,8 +168,8 @@ export default function TwinScreen() {
               <>
                 <button
                   className={`wb${dockOpen ? " on" : ""}`}
-                  title="战绩台"
-                  aria-label="战绩台"
+                  title="工作台"
+                  aria-label="工作台"
                   onClick={toggleDock}
                 >
                   <Icon name="record" />
@@ -215,13 +221,26 @@ export default function TwinScreen() {
                 onSay={say}
                 onAnswer={answer}
                 onTick={enter}
+                onOpenThread={() => openDock("thread")}
               />
             )}
           </div>
         </main>
 
-        <section className="dock" aria-label="战绩台">
-          <Dock record={record} onClose={toggleDock} />
+        <section className="dock" aria-label="工作台">
+          <Dock
+            tab={tab}
+            setTab={(t) => {
+              setTab(t);
+              if (t === "record" && twinId)
+                client.record(twinId).then(setRecord).catch(() => undefined);
+            }}
+            thread={thread}
+            record={record}
+            busy={busy}
+            onAnswer={answer}
+            onClose={() => setDockOpen(false)}
+          />
         </section>
       </div>
     </div>
@@ -242,10 +261,11 @@ function wonRole(thread: Thread | null, roles: Role[]): string | null {
 const PALETTE = ["#6fe3bd", "#9cc0ff", "#b9a6ff", "#f2c94c", "#f58aa0", "#7ad7f0"];
 const faceColour = (i: number) => PALETTE[i % PALETTE.length];
 
-function Icon({ name }: { name: "record" | "reset" | "send" | "mic" }) {
+function Icon({ name }: { name: "record" | "reset" | "send" | "mic" | "close" }) {
   const paths: Record<string, React.ReactNode> = {
     record: <path d="M3 13l3-4 3 3 4-7" />,
     reset: <path d="M3 8a5 5 0 1 1 1.6 3.7M3 5v3h3" />,
+    close: <path d="m5 5 6 6M11 5l-6 6" />,
     send: <path d="M2.5 8L13.5 3 10 13.5 7.5 8.5z" />,
     mic: (
       <>
@@ -505,7 +525,7 @@ function Retelling({
   );
 }
 
-// ──────────────────────────────── the conversation ────────────────────────────────
+// ──────────────────────────────── the current turn ────────────────────────────────
 
 const SAYING: Record<OrbMode, [string, string]> = {
   listen: ["我在听", "说点什么，它会先判断再开口"],
@@ -513,6 +533,18 @@ const SAYING: Record<OrbMode, [string, string]> = {
   speak: ["正在说", "说出口的每一句都会被封存"],
 };
 
+const clock = (iso: string) =>
+  new Date(iso).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+
+/**
+ * The stage carries one turn: what was just said, and what the twin said back. The thread is
+ * in the dock, because a scrolling log in front of the orb turns the screen into a transcript
+ * with an ornament on top — the orb is there to say what is happening right now, and that only
+ * works if it has the room to.
+ *
+ * The exception is an open question. That is the one thing on screen waiting on the person, so
+ * it takes the twin's half of the stage until it is answered.
+ */
 function Conversation({
   thread,
   stage,
@@ -522,6 +554,7 @@ function Conversation({
   onSay,
   onAnswer,
   onTick,
+  onOpenThread,
 }: {
   thread: Thread;
   stage: Stage | null;
@@ -531,12 +564,17 @@ function Conversation({
   onSay: (text: string) => void;
   onAnswer: (askId: string, option: string) => void;
   onTick: () => void;
+  onOpenThread: () => void;
 }) {
   const [draft, setDraft] = useState("");
-  const bottom = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    bottom.current?.scrollIntoView({ behavior: "smooth" });
-  }, [thread.messages.length]);
+
+  const asking = [...thread.messages]
+    .reverse()
+    .find((m) => m.kind === "asked_by_twin" && !m.answer);
+  const lastUser = [...thread.messages].reverse().find((m) => m.kind === "said_by_user");
+  const lastTwin = [...thread.messages]
+    .reverse()
+    .find((m) => m.kind === "said_by_twin" || m.kind === "replied_by_twin");
 
   const send = () => {
     const text = draft.trim();
@@ -558,60 +596,66 @@ function Conversation({
         </article>
       )}
 
-      <div className="thread">
-        {thread.messages.map((m, i) => {
-          if (m.kind === "said_by_user")
-            return <div key={i} className="bubble mine">{m.text}</div>;
-
-          // No footer: there is no stake, no date and no seal, because nothing was sealed.
-          // Dressing a remark up as a judgment is the thing the footer exists to prevent.
-          if (m.kind === "replied_by_twin")
-            return <div key={i} className="bubble theirs">{m.text}</div>;
-
-          if (m.kind === "asked_by_twin")
-            return (
-              <div key={i} className="bubble theirs ask">
-                <p className="q">{m.text}</p>
-                <small>{m.why}</small>
-                {m.answer ? (
-                  <p className="answered">你答了：{m.answer}</p>
-                ) : (
-                  <div className="options">
-                    {m.options.map((o) => (
-                      <button key={o} disabled={busy} onClick={() => onAnswer(m.ask_id, o)}>
-                        {o}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-
-          return (
-            <div key={i} className="bubble theirs">
-              <p>{m.text}</p>
-              <footer>
-                {m.confidence_state === "provisional" && <span>把握还没校准</span>}
-                {m.settlement ? (
-                  <span className={m.settlement.correct ? "right" : "wrong"}>
-                    {m.settlement.correct ? "说对了" : "说错了"}
+      <div className="turn">
+      {asking && asking.kind === "asked_by_twin" ? (
+        <div className="asking">
+          <p className="q">{asking.text}</p>
+          <small>{asking.why}</small>
+          <div className="options">
+            {asking.options.map((o) => (
+              <button key={o} disabled={busy} onClick={() => onAnswer(asking.ask_id, o)}>
+                {o}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="cards">
+          <article className={`card${lastUser ? "" : " empty-card"}`}>
+            <div className="h">
+              <span>你</span>
+              {lastUser && <time>{clock(lastUser.at)}</time>}
+            </div>
+            <div className="t">{lastUser?.text ?? "还没说什么"}</div>
+          </article>
+          <article className={`card${lastTwin ? "" : " empty-card"}`}>
+            <div className="h">
+              <span>它</span>
+              {lastTwin && <time>{clock(lastTwin.at)}</time>}
+            </div>
+            <div className="t">{lastTwin?.text ?? "等你开口"}</div>
+            {lastTwin?.kind === "said_by_twin" && (
+              <div className="seal">
+                {lastTwin.settlement ? (
+                  <span className={lastTwin.settlement.correct ? "right" : "wrong"}>
+                    {lastTwin.settlement.correct ? "说对了" : "说错了"}
                   </span>
                 ) : (
-                  <span className="pending">还没到期</span>
+                  <span>还没到期</span>
                 )}
-                <code title={`封存哈希 ${m.seal_hash}`}>🔒 {m.seal_hash.slice(0, 8)}</code>
-              </footer>
-            </div>
-          );
-        })}
-        <div ref={bottom} />
+                <span title={`封存哈希 ${lastTwin.seal_hash}`}>
+                  🔒 {lastTwin.seal_hash.slice(0, 8)}
+                </span>
+              </div>
+            )}
+          </article>
+        </div>
+      )}
       </div>
 
-      {/* The silence is part of the record: a twin graded only on what it said would learn
-          that staying quiet is never wrong. */}
-      {thread.held_today > 0 && (
-        <p className="held">今天它忍住没说 {thread.held_today} 条</p>
-      )}
+      <div className="ready">
+        <span className="lead">
+          {/* The silence is part of the record: a twin graded only on what it said would
+              learn that staying quiet is never wrong. */}
+          {thread.held_today > 0
+            ? `今天它忍住没说 ${thread.held_today} 条`
+            : `${thread.messages.length} 条记录`}
+        </span>
+        <button className="more" onClick={onOpenThread}>
+          看完整对话 →
+        </button>
+        <em>SEALED</em>
+      </div>
 
       {error && <p className="err" role="alert">{error}</p>}
 
@@ -653,20 +697,106 @@ function Conversation({
 
 // ──────────────────────────────────── the dock ────────────────────────────────────
 
-function Dock({ record, onClose }: { record: TwinRecord | null; onClose: () => void }) {
+/** The workbench: the whole thread, and the record it adds up to. */
+function Dock({
+  tab,
+  setTab,
+  thread,
+  record,
+  busy,
+  onAnswer,
+  onClose,
+}: {
+  tab: "thread" | "record";
+  setTab: (t: "thread" | "record") => void;
+  thread: Thread | null;
+  record: TwinRecord | null;
+  busy: boolean;
+  onAnswer: (askId: string, option: string) => void;
+  onClose: () => void;
+}) {
+  const bottom = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (tab === "thread") bottom.current?.scrollIntoView();
+  }, [tab, thread?.messages.length]);
+
   return (
     <div className="dockx">
+      <div className="tabs">
+        <button className={`tab${tab === "thread" ? " on" : ""}`} onClick={() => setTab("thread")}>
+          对话
+        </button>
+        <button className={`tab${tab === "record" ? " on" : ""}`} onClick={() => setTab("record")}>
+          战绩
+        </button>
+      </div>
       <div className="dhead">
-        <b>战绩台</b>
+        <b>{tab === "thread" ? "全部说过的话" : "它说对了多少"}</b>
         <button className="wb" aria-label="收起" onClick={onClose}>
-          <Icon name="reset" />
+          <Icon name="close" />
         </button>
       </div>
       <div className="dbody">
-        {!record ? (
+        {tab === "thread" ? (
+          !thread || !thread.messages.length ? (
+            <div className="empty">还没说过话。</div>
+          ) : (
+            <div className="thread">
+              {thread.messages.map((m, i) => {
+                if (m.kind === "said_by_user")
+                  return <div key={i} className="bubble mine">{m.text}</div>;
+
+                // No footer: there is no stake, no date and no seal, because nothing was
+                // sealed. Dressing a remark up as a judgment is what the footer prevents.
+                if (m.kind === "replied_by_twin")
+                  return <div key={i} className="bubble theirs">{m.text}</div>;
+
+                if (m.kind === "asked_by_twin")
+                  return (
+                    <div key={i} className="bubble theirs ask">
+                      <p className="q">{m.text}</p>
+                      <small>{m.why}</small>
+                      {m.answer ? (
+                        <p className="answered">你答了：{m.answer}</p>
+                      ) : (
+                        <div className="options">
+                          {m.options.map((o) => (
+                            <button key={o} disabled={busy}
+                                    onClick={() => onAnswer(m.ask_id, o)}>
+                              {o}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+
+                return (
+                  <div key={i} className="bubble theirs">
+                    <p>{m.text}</p>
+                    <footer>
+                      {m.confidence_state === "provisional" && <span>把握还没校准</span>}
+                      {m.settlement ? (
+                        <span className={m.settlement.correct ? "right" : "wrong"}>
+                          {m.settlement.correct ? "说对了" : "说错了"}
+                        </span>
+                      ) : (
+                        <span className="pending">还没到期</span>
+                      )}
+                      <code title={`封存哈希 ${m.seal_hash}`}>🔒 {m.seal_hash.slice(0, 8)}</code>
+                    </footer>
+                  </div>
+                );
+              })}
+              <div ref={bottom} />
+            </div>
+          )
+        ) : !record ? (
           <div className="empty">正在读账本…</div>
         ) : !record.domains.length ? (
-          <div className="empty">还没有判断。{"\n"}跟它说点什么，它说出口的每一句都会记在这儿。</div>
+          <div className="empty">
+            还没有判断。{"\n"}跟它说点什么，它说出口的每一句都会记在这儿。
+          </div>
         ) : (
           record.domains.map((d) => (
             <article className="dom" key={d.domain}>

@@ -295,13 +295,20 @@
   padding: 0 22px 12px;
 }
 .twin-root .orb {
-  flex: 0 0 26%;
-  min-height: 120px;
+  /* Fixed share, not flexible: given flex:1 it fought whatever was below it, and a tall
+     question pushed the sphere clean out of the frame. The turn below scrolls instead. */
+  flex: 0 0 32%;
+  min-height: 130px;
   width: 100%;
   display: block;
 }
 .twin-root .win.bare .orb {
-  flex: 0 0 34%;
+  flex: 0 0 30%;
+}
+/* With the dock open the stage is narrow, so the orb gives up room rather than squeezing
+   the one exchange that is on screen. */
+.twin-root .win.dock-open .orb {
+  flex: 0 0 30%;
 }
 .twin-root .col {
   width: 100%;
@@ -472,6 +479,175 @@
   font-size: 10px;
   margin: 0 0 8px;
   flex: none;
+}
+
+/* ── the current exchange ─────────────────────────────────────────────────── */
+
+/* The stage holds one turn, not the thread. The prototype's proportions are the argument:
+   the orb is the thing that tells you what is happening right now, and a scrolling log in
+   front of it turns the screen into a transcript with an ornament on top. The whole thread
+   is a click away in the dock, where reading it is what you went for. */
+.twin-root .turn {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  /* From the top: when the twin is asking, the question is the first thing to read, and
+     anchoring to the bottom cut the question off above the fold. */
+  justify-content: flex-start;
+  padding-bottom: 2px;
+}
+.twin-root .cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
+  flex: none;
+}
+.twin-root .win.dock-open .cards {
+  grid-template-columns: 1fr;
+}
+.twin-root .card {
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--glass);
+  padding: 9px 12px;
+  min-width: 0;
+  min-height: 62px;
+  display: flex;
+  flex-direction: column;
+}
+.twin-root .card .h {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 9.5px;
+  color: var(--muted);
+  margin-bottom: 4px;
+  flex: none;
+}
+.twin-root .card .h time {
+  font-family: var(--f-mono);
+  color: var(--dim);
+}
+.twin-root .card .t {
+  font-size: 12px;
+  line-height: 1.65;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.twin-root .card.empty-card .t {
+  color: var(--dim);
+}
+.twin-root .card .seal {
+  margin-top: auto;
+  padding-top: 7px;
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  font-size: 9px;
+  color: var(--dim);
+  font-family: var(--f-mono);
+}
+.twin-root .card .seal .right { color: var(--ok); }
+.twin-root .card .seal .wrong { color: var(--red); }
+
+/* An open question is the one thing on screen that is waiting on the person, so it takes the
+   stage rather than sitting in a log behind a button. */
+.twin-root .asking {
+  border: 1px solid var(--line2);
+  background: rgba(120, 175, 255, 0.07);
+  border-radius: 11px;
+  padding: 11px 13px;
+  flex: none;
+}
+.twin-root .asking .q {
+  font-size: 13px;
+  font-weight: 500;
+  margin: 0;
+}
+.twin-root .asking small {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  margin: 4px 0 9px;
+}
+.twin-root .asking .options {
+  display: grid;
+  gap: 5px;
+}
+.twin-root .asking .options button {
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 11px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: #c8d3e1;
+}
+.twin-root .asking .options button:hover:not(:disabled) {
+  background: rgba(120, 175, 255, 0.1);
+  border-color: var(--glow);
+}
+
+/* ── ready bar ────────────────────────────────────────────────────────────── */
+
+.twin-root .ready {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 9.5px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px 11px;
+  margin: 8px 0;
+  flex: none;
+}
+.twin-root .ready .lead::before {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ok);
+  margin-right: 6px;
+  vertical-align: 1px;
+}
+.twin-root .ready em {
+  font-style: normal;
+  font-family: var(--f-mono);
+  letter-spacing: 0.12em;
+  font-size: 9px;
+  color: var(--dim);
+}
+.twin-root .ready .more {
+  color: var(--speak);
+  font-size: 10px;
+}
+
+/* ── dock tabs ────────────────────────────────────────────────────────────── */
+
+.twin-root .tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 10px 0;
+  flex: none;
+}
+.twin-root .tab {
+  font-size: 11px;
+  padding: 5px 12px;
+  border-radius: 8px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.twin-root .tab.on {
+  color: var(--fg);
+  background: rgba(120, 175, 255, 0.14);
+  border: 1px solid var(--line2);
 }
 
 /* ── composer ─────────────────────────────────────────────────────────────── */
@@ -757,6 +933,11 @@
   min-width: 0;
   overflow: hidden;
   padding: 0 12px 12px 0;
+}
+/* The panel keeps a min-width so it never squeezes into unreadability, which means a closed
+   column of zero width still leaks a sliver of it down the right edge. */
+.twin-root .win:not(.dock-open) .dock {
+  visibility: hidden;
 }
 .twin-root .dockx {
   height: 100%;
